@@ -43,7 +43,7 @@ def plot_kl_divergence(years, kl_values, olmo_training_data, data_source="in_yea
         default_count_bins = [0, 1, 5000, 15000, 25000, 35000, 45000, 55000]
     else:  # "in_year_there_word_counts"
         title_suffix = "In [year] there"
-        default_count_bins = [0, 1, 4, 11]
+        default_count_bins = [0, 1, 2, 3, 4, 11]
     
     # Use provided count_bins or defaults
     if count_bins is None:
@@ -228,8 +228,8 @@ def get_relative_probabilities(olmo_predictions, olmo_training_data, data_source
 
 if __name__ == "__main__":
     # Configuration - modify these as needed
-    # DATA_SOURCE = "in_year_there_word_counts"  
-    DATA_SOURCE = "co_occurrence_frequency_word_boundaries"
+    DATA_SOURCE = "in_year_there_word_counts"  
+    # DATA_SOURCE = "co_occurrence_frequency_word_boundaries"
     
     # Custom bins for different data sources (optional - will use defaults if None)
     CUSTOM_COUNT_BINS = None  # e.g., [0, 10, 50, 100, 500] for co-occurrence
