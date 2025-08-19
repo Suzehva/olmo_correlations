@@ -1,8 +1,9 @@
 import json
 import scipy.stats
 
-OLMO_PREDICTIONS_PATH = "../olmo_predictions/1000-3000__was.were.is.are.will__suzeva_olmo2-1b-4xH100-2ndtry-step-10000__In_[year]_there/olmo_predictions.json"
+OLMO_PREDICTIONS_PATH = "../olmo_predictions/1000-3000__was.were.is.are.will__suzeva_olmo2-1b-4xH100-2ndtry-step-10000__In_[year]_there/olmo_predictions.json" # accidentally hardcoded my name in here whoops
 OLMO_TRAINING_DATA_FILE = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-10000/analytics/1000-3000__was.were.is.are.will__aggregated_results_steps0-10000.json"
+OLMO_EXTRA_TRAINING_DATA_FILE = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-10000/extra_analytics/1000-3000__was.were.is.are.will__extra_aggregated_results_steps0-10000.json"
 
 
 class KLDivergenceCaluclator:
@@ -115,7 +116,6 @@ class KLDivergenceCaluclator:
         with open(OLMO_TRAINING_DATA_FILE, "r") as f:
             olmo_training_data = json.load(f)
 
-
         avg_relative_counts = {
             "past": 0,
             "present": 0,
@@ -132,8 +132,53 @@ class KLDivergenceCaluclator:
         return self.calculate_kl_divergence(avg_year_to_relative_counts)
 
 
+    def co_occurrence_and_string_match_fallback(self):
+        with open(OLMO_EXTRA_TRAINING_DATA_FILE, "r") as f:
+            olmo_training_data = json.load(f)
+        
+        year_to_relative_counts = {}
+        relative_counts = olmo_training_data["in_year_tense_sentence_counts"]
+        for year in relative_counts.keys():
+            counts_per_year = relative_counts[year]
+            total_be_tense_counts = counts_per_year.get("was", 0) + counts_per_year.get("were", 0) + counts_per_year.get("is", 0) + counts_per_year.get("are", 0) + counts_per_year.get("will", 0)
+            if total_be_tense_counts == 0:
+                year_to_relative_counts[int(year)] = {
+                    "past": 0,
+                    "present": 0,
+                    "future": 0
+                }
+                continue
 
+            past = (counts_per_year.get("was", 0) + counts_per_year.get("were", 0)) / total_be_tense_counts
+            present = (counts_per_year.get("is", 0) + counts_per_year.get("are", 0)) / total_be_tense_counts
+            future = counts_per_year.get("will", 0) / total_be_tense_counts
 
+            year_to_relative_counts[int(year)] = {
+                "past": past,
+                "present": present,
+                "future": future
+            }
+        
+        return self.calculate_kl_divergence(year_to_relative_counts)
+
+    def avg_co_occurrence_and_string_match_fallback(self):
+        with open(OLMO_EXTRA_TRAINING_DATA_FILE, "r") as f:
+            olmo_training_data = json.load(f)
+
+        avg_relative_counts = {
+            "past": 0,
+            "present": 0,
+            "future": 0
+        }
+        relative_counts = olmo_training_data["in_year_tense_sentence_counts"]
+        for year in relative_counts.keys():
+            counts_per_year = relative_counts[year]
+            avg_relative_counts["past"] += counts_per_year.get("was", 0) + counts_per_year.get("were", 0)
+            avg_relative_counts["present"] += counts_per_year.get("is", 0) + counts_per_year.get("are", 0)
+            avg_relative_counts["future"] += counts_per_year.get("will", 0)
+
+        avg_year_to_relative_counts = {year:avg_relative_counts for year in range(1000, 3000)}
+        return self.calculate_kl_divergence(avg_year_to_relative_counts)
 
 
     def exact_string_matching_fallback(self):
@@ -238,6 +283,21 @@ if __name__ == "__main__":
 
 
 
+    results = kl_div.co_occurrence_and_string_match_fallback()
+    print("\n\n co_occurrence_and_string_match_fallback")
+    print(f"ID Average KL: {results['id_avg_kl']}, Years used: {len(results['id_years_used'])}")
+    print(f"OOD Average KL: {results['ood_avg_kl']}, Years used: {len(results['ood_years_used'])}")
+
+    results = kl_div.avg_co_occurrence_and_string_match_fallback()
+    print("\n\n avg_co_occurrence_and_string_match_fallback")
+    print(f"ID Average KL: {results['id_avg_kl']}, Years used: {len(results['id_years_used'])}")
+    print(f"OOD Average KL: {results['ood_avg_kl']}, Years used: {len(results['ood_years_used'])}")
+
+
+
+
+
+
 """
 RESULTS SO FAR:
 co_occurrence_fallback
@@ -268,6 +328,16 @@ OOD Average KL: 1.4676410755051637, Years used: 1338
  be_verb_fallback
 ID Average KL: 2.1155453031053546, Years used: 662
 OOD Average KL: 1.4135618672694528, Years used: 1338
+
+
+ co_occurrence_and_string_match_fallback
+ID Average KL: 0.33874721174797506, Years used: 662
+OOD Average KL: 0.4626524257151556, Years used: 1258
+
+
+ avg_co_occurrence_and_string_match_fallback
+ID Average KL: 0.6529806063149279, Years used: 662
+OOD Average KL: 0.34365811423268905, Years used: 1338
 (time-env) suzeva@sphinx9:~/olmo_correlations$ 
 
 
