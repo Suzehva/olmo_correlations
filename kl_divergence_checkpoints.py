@@ -102,7 +102,7 @@ class KLAnalyzer:
         plt.xlabel("Checkpoint")
         plt.ylabel("Average KL Divergence")
         plt.title(f"Avg KL Divergence Trend | {self.data_source} | Count range {count_range}")
-        plt.ylim(0,3)
+        plt.ylim(0,1.5)
         plt.grid(True)
         plt.tight_layout()
         os.makedirs("checkpoints", exist_ok=True)
@@ -163,7 +163,7 @@ class KLAnalyzer:
         plt.xlabel("Checkpoint")
         plt.ylabel("Average KL Divergence")
         plt.title(f"Avg KL Divergence Trend | {self.data_source} | {prior_method}")
-        plt.ylim(0,3)
+        plt.ylim(0, 1.5)
         plt.grid(True)
         plt.legend(loc='upper right')
         plt.tight_layout()
@@ -206,6 +206,7 @@ if __name__ == "__main__":
     #     analyzer.plot_avg_kl_over_checkpoints(CHECKPOINTS, avg_kl_values, count_range=count_range)
 
     # Many ranges at once, with cutoffs:
+    PRIOR_METHOD =  "global"
     CUTOFFS = [2, 4, 6, 10, 50, 100] # always pass cutoffs >1
     analyzer.plot_avg_kl_by_bins(CHECKPOINTS, cutoffs=CUTOFFS, prior_method=PRIOR_METHOD)
    
