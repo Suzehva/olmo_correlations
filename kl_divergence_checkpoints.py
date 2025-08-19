@@ -111,15 +111,105 @@ class KLAnalyzer:
         plt.close()
 
 
+    def compute_avg_kl_by_bins(self, ckpt, cutoffs=[4,10], prior_method="per_year"):
+        pred_file = os.path.join(self.checkpoint_dir, f"checkpoint_{ckpt}.json")
+        if not os.path.exists(pred_file):
+            return {self._bin_label(low, high, cutoffs): (None, 0) for low, high in self._bin_edges(cutoffs)}
+
+        with open(pred_file, "r") as f:
+            predictions = json.load(f)
+        model, train = self.get_relative_probabilities(predictions, prior_method=prior_method)
+
+        bin_edges = self._bin_edges(cutoffs)
+        bin_labels = [self._bin_label(low, high, cutoffs) for low, high in bin_edges]
+        bin_kl = {label: [] for label in bin_labels}
+        bin_counts = {label: 0 for label in bin_labels}
+
+        for y in model.keys():
+            if y not in train:
+                continue
+            total_count = sum(self.training_data[self.data_source].get(y, {}).get(k,0) for k in ["was","were","is","are","will"])
+            for (low, high), label in zip(bin_edges, bin_labels):
+                if low <= total_count < high:
+                    bin_kl[label].append(self.kl_divergence_from_dicts(train[y], model[y]))
+                    bin_counts[label] += 1
+                    break
+
+        return {label: (np.mean(vals) if vals else None, bin_counts[label]) for label, vals in bin_kl.items()}
+
+    def plot_avg_kl_by_bins(self, checkpoints, cutoffs=[4,10], prior_method="per_year"):
+        plt.figure(figsize=(12,5))
+        bin_edges = self._bin_edges(cutoffs)
+        bin_labels = [self._bin_label(low, high, cutoffs) for low, high in bin_edges]
+        bin_kl_over_ckpts = {label: [] for label in bin_labels}
+        bin_counts_per_label = {label: 0 for label in bin_labels}
+
+        for ckpt in checkpoints:
+            kl_by_bin = self.compute_avg_kl_by_bins(ckpt, cutoffs=cutoffs, prior_method=prior_method)
+            for label in bin_labels:
+                kl_val, count = kl_by_bin.get(label, (None, 0))
+                bin_kl_over_ckpts[label].append(kl_val)
+                bin_counts_per_label[label] = max(bin_counts_per_label[label], count)
+
+        # plot each bin
+        for label in bin_labels:
+            kl_vals = bin_kl_over_ckpts[label]
+            ckpts_filtered = [c for c, kl in zip(checkpoints, kl_vals) if kl is not None]
+            kl_filtered = [kl for kl in kl_vals if kl is not None]
+            label_with_count = f"{label} ({bin_counts_per_label[label]})" if bin_counts_per_label[label] > 0 else None
+            if label_with_count:
+                plt.plot(ckpts_filtered, kl_filtered, marker='o', label=label_with_count)
+
+        plt.xlabel("Checkpoint")
+        plt.ylabel("Average KL Divergence")
+        plt.title(f"Avg KL Divergence Trend | {self.data_source} | {prior_method}")
+        plt.ylim(0,3)
+        plt.grid(True)
+        plt.legend(loc='upper right')
+        plt.tight_layout()
+        os.makedirs("checkpoints", exist_ok=True)
+        plt.savefig(f"checkpoints/avg_kl_by_bins_{cutoffs[0]}_{cutoffs[-1]}_{prior_method}.png")
+        plt.show()
+        plt.close()
+
+
+    @staticmethod
+    def _bin_edges(cutoffs):
+        bins = []
+        low = 1
+        for c in cutoffs:
+            high = c-1
+            if high >= low:
+                bins.append((low, high))
+            low = c
+        bins.append((low, int(1e9)))  # last bin always ≥1
+        return bins
+
+    @staticmethod
+    def _bin_label(low, high, cutoffs):
+        if high >= 1e9:
+            return f"freq ≥ {low}"
+        else:
+            return f"freq {low}-{high}"
+
+
 if __name__ == "__main__":
     analyzer = KLAnalyzer(TRAINING_DATA_FILE, CHECKPOINT_DIR, "in_year_there_word_counts")
     CHECKPOINTS = list(range(250, 10001, 250))
-    COUNT_RANGES = [(1,10), (1,2), (2,3), (3, 4), (5, 1000)]
-    PRIOR_METHOD = "global"
+    PRIOR_METHOD =  "global"
 
-    for count_range in COUNT_RANGES:
-        avg_kl_values = [analyzer.compute_avg_kl_for_checkpoint(ckpt, count_range=count_range, prior_method=PRIOR_METHOD)
-                         for ckpt in CHECKPOINTS]
-        analyzer.plot_avg_kl_over_checkpoints(CHECKPOINTS, avg_kl_values, count_range=count_range)
+    # One plot at a time:
+    # COUNT_RANGES = [(1,10), (1,2), (2,3), (3, 4), (5, 1000)]
+    # for count_range in COUNT_RANGES:
+    #     avg_kl_values = [analyzer.compute_avg_kl_for_checkpoint(ckpt, count_range=count_range, prior_method=PRIOR_METHOD)
+    #                      for ckpt in CHECKPOINTS]
+    #     analyzer.plot_avg_kl_over_checkpoints(CHECKPOINTS, avg_kl_values, count_range=count_range)
 
-        
+    # Many ranges at once, with cutoffs:
+    CUTOFFS = [2, 4, 6, 10, 50, 100] # always pass cutoffs >1
+    analyzer.plot_avg_kl_by_bins(CHECKPOINTS, cutoffs=CUTOFFS, prior_method=PRIOR_METHOD)
+   
+    PRIOR_METHOD =  "per_year"
+    CUTOFFS = [2, 4, 6, 10, 50, 100] # always pass cutoffs >1
+    analyzer.plot_avg_kl_by_bins(CHECKPOINTS, cutoffs=CUTOFFS, prior_method=PRIOR_METHOD)
+   
