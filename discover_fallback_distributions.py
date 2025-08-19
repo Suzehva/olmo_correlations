@@ -1,5 +1,6 @@
 import json
 import scipy.stats
+import matplotlib.pyplot as plt
 
 OLMO_PREDICTIONS_PATH = "../olmo_predictions/1000-3000__was.were.is.are.will__suzeva_olmo2-1b-4xH100-2ndtry-step-10000__In_[year]_there/olmo_predictions.json" # accidentally hardcoded my name in here whoops
 OLMO_TRAINING_DATA_FILE = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-10000/analytics/1000-3000__was.were.is.are.will__aggregated_results_steps0-10000.json"
@@ -40,6 +41,7 @@ class KLDivergenceCaluclator:
         """Helper function to calculate KL divergence for a given set of years"""
         years_used = set()
         kl_divergences = []
+        year_to_kl_divergence = {}
         
         for year in years_to_use:
             assert year in training_data_distributions
@@ -60,30 +62,89 @@ class KLDivergenceCaluclator:
                 [olmo_prediction_distribution["past"], olmo_prediction_distribution["present"], olmo_prediction_distribution["future"]]
             )
             kl_divergences.append(kl_div_for_year)
+            year_to_kl_divergence[year] = kl_div_for_year
         
         assert len(kl_divergences) == len(years_used)
-        return sum(kl_divergences) / len(kl_divergences) if len(kl_divergences) != 0 else 0, years_used
+        return sum(kl_divergences) / len(kl_divergences) if len(kl_divergences) != 0 else 0, years_used, year_to_kl_divergence
 
     def calculate_kl_divergence(self, training_data_distributions):
         # calculate separate KL divergences for ID/OOD; only calculate if training data has any relative probabilities
 
         # ID KL divergence
-        id_avg_kl, id_years_used = self._calculate_kl_divergence_for_years(self.ID_years, training_data_distributions)
+        id_avg_kl, id_years_used, id_year_to_kl = self._calculate_kl_divergence_for_years(self.ID_years, training_data_distributions)
         
         # OOD KL divergence  
-        ood_avg_kl, ood_years_used = self._calculate_kl_divergence_for_years(self.OOD_years, training_data_distributions)
+        ood_avg_kl, ood_years_used, ood_year_to_kl = self._calculate_kl_divergence_for_years(self.OOD_years, training_data_distributions)
         
         return {
             'id_avg_kl': id_avg_kl,
             'id_years_used': id_years_used,
+            'id_year_to_kl': id_year_to_kl,
             'ood_avg_kl': ood_avg_kl, 
-            'ood_years_used': ood_years_used
+            'ood_years_used': ood_years_used,
+            'ood_year_to_kl': ood_year_to_kl
         }
+
+    def plot_kl_divergence_by_year(self, training_data_distributions, title="KL Divergence by Year", save_path=None):
+        """
+        Plot KL divergence per year comparing OLMO predictions with another distribution.
+        Colors OOD years in red and ID years in blue.
+        
+        Args:
+            training_data_distributions: Dictionary mapping year to distribution
+            title: Title for the plot
+            save_path: Optional path to save the plot
+        """
+        # Use the existing calculate_kl_divergence function to get per-year KL divergences
+        kl_results = self.calculate_kl_divergence(training_data_distributions)
+        
+        years = []
+        kl_divergences = []
+        colors = []
+        
+        # Combine ID and OOD year data
+        all_year_to_kl = {}
+        all_year_to_kl.update(kl_results['id_year_to_kl'])
+        all_year_to_kl.update(kl_results['ood_year_to_kl'])
+        
+        # Sort years for plotting
+        for year in sorted(all_year_to_kl.keys()):
+            years.append(year)
+            kl_divergences.append(all_year_to_kl[year])
+            
+            # Color coding: red for OOD, blue for ID
+            if year in self.OOD_years:
+                colors.append('red')
+            else:
+                colors.append('blue')
+        
+        # Create the plot
+        plt.figure(figsize=(12, 6))
+        plt.scatter(years, kl_divergences, c=colors, alpha=0.6, s=20)
+        plt.xlabel('Year')
+        plt.ylabel('KL Divergence')
+        plt.title(title)
+        plt.grid(True, alpha=0.3)
+        
+        # Add legend
+        from matplotlib.patches import Patch
+        legend_elements = [Patch(facecolor='blue', label='ID Years'),
+                          Patch(facecolor='red', label='OOD Years')]
+        plt.legend(handles=legend_elements)
+        
+        plt.tight_layout()
+        
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        
+        plt.show()
+        
+        return years, kl_divergences, colors
 
     # END OF HELPER FUNCTIONS
 
     # START OF FALLBACK DISTRIBUTIONS OPTIONS
-    def co_occurrence_fallback(self):
+    def co_occurrence_fallback(self, plot=False, save_path=None):
         with open(OLMO_TRAINING_DATA_FILE, "r") as f:
             olmo_training_data = json.load(f)
         
@@ -110,9 +171,16 @@ class KLDivergenceCaluclator:
                 "future": future
             }
         
+        if plot:
+            self.plot_kl_divergence_by_year(
+                year_to_relative_counts, 
+                title="KL Divergence by Year: Co-occurrence Fallback vs OLMO Predictions",
+                save_path=save_path
+            )
+        
         return self.calculate_kl_divergence(year_to_relative_counts)
 
-    def avg_co_occurrence_fallback(self):
+    def avg_co_occurrence_fallback(self, plot=False, save_path=None):
         with open(OLMO_TRAINING_DATA_FILE, "r") as f:
             olmo_training_data = json.load(f)
 
@@ -129,10 +197,18 @@ class KLDivergenceCaluclator:
             avg_relative_counts["future"] += counts_per_year.get("will", 0)
 
         avg_year_to_relative_counts = {year:avg_relative_counts for year in range(1000, 3000)}
+        
+        if plot:
+            self.plot_kl_divergence_by_year(
+                avg_year_to_relative_counts, 
+                title="KL Divergence by Year: Average Co-occurrence Fallback vs OLMO Predictions",
+                save_path=save_path
+            )
+        
         return self.calculate_kl_divergence(avg_year_to_relative_counts)
 
 
-    def co_occurrence_and_string_match_fallback(self):
+    def co_occurrence_and_string_match_fallback(self, plot=False, save_path=None):
         with open(OLMO_EXTRA_TRAINING_DATA_FILE, "r") as f:
             olmo_training_data = json.load(f)
         
@@ -159,9 +235,16 @@ class KLDivergenceCaluclator:
                 "future": future
             }
         
+        if plot:
+            self.plot_kl_divergence_by_year(
+                year_to_relative_counts, 
+                title="KL Divergence by Year: Co-occurrence and String Match Fallback vs OLMO Predictions",
+                save_path=save_path
+            )
+        
         return self.calculate_kl_divergence(year_to_relative_counts)
 
-    def avg_co_occurrence_and_string_match_fallback(self):
+    def avg_co_occurrence_and_string_match_fallback(self, plot=False, save_path=None):
         with open(OLMO_EXTRA_TRAINING_DATA_FILE, "r") as f:
             olmo_training_data = json.load(f)
 
@@ -178,10 +261,18 @@ class KLDivergenceCaluclator:
             avg_relative_counts["future"] += counts_per_year.get("will", 0)
 
         avg_year_to_relative_counts = {year:avg_relative_counts for year in range(1000, 3000)}
+        
+        if plot:
+            self.plot_kl_divergence_by_year(
+                avg_year_to_relative_counts, 
+                title="KL Divergence by Year: Average Co-occurrence and String Match Fallback vs OLMO Predictions",
+                save_path=save_path
+            )
+        
         return self.calculate_kl_divergence(avg_year_to_relative_counts)
 
 
-    def exact_string_matching_fallback(self):
+    def exact_string_matching_fallback(self, plot=False, save_path=None):
         with open(OLMO_TRAINING_DATA_FILE, "r") as f:
             olmo_training_data = json.load(f)
         
@@ -208,9 +299,16 @@ class KLDivergenceCaluclator:
                 "future": future
             }
         
+        if plot:
+            self.plot_kl_divergence_by_year(
+                year_to_relative_counts, 
+                title="KL Divergence by Year: Exact String Matching Fallback vs OLMO Predictions",
+                save_path=save_path
+            )
+        
         return self.calculate_kl_divergence(year_to_relative_counts)
 
-    def avg_exact_string_matching_fallback(self):
+    def avg_exact_string_matching_fallback(self, plot=False, save_path=None):
         with open(OLMO_TRAINING_DATA_FILE, "r") as f:
             olmo_training_data = json.load(f)
 
@@ -227,19 +325,43 @@ class KLDivergenceCaluclator:
             avg_relative_counts["future"] += counts_per_year.get("will", 0)
 
         avg_year_to_relative_counts = {year:avg_relative_counts for year in range(1000, 3000)}
+        
+        if plot:
+            self.plot_kl_divergence_by_year(
+                avg_year_to_relative_counts, 
+                title="KL Divergence by Year: Average Exact String Matching Fallback vs OLMO Predictions",
+                save_path=save_path
+            )
+        
         return self.calculate_kl_divergence(avg_year_to_relative_counts)
 
 
-    def uniform_distribution_fallback(self):
+    def uniform_distribution_fallback(self, plot=False, save_path=None):
         year_to_relative_counts = {year:{"past":1/3, "present":1/3, "future":1/3} for year in range(1000, 3000)}
+        
+        if plot:
+            self.plot_kl_divergence_by_year(
+                year_to_relative_counts, 
+                title="KL Divergence by Year: Uniform Distribution Fallback vs OLMO Predictions",
+                save_path=save_path
+            )
+        
         return self.calculate_kl_divergence(year_to_relative_counts)
 
-    def be_verb_fallback(self):
+    def be_verb_fallback(self, plot=False, save_path=None):
         with open(OLMO_TRAINING_DATA_FILE, "r") as f:
             olmo_training_data = json.load(f)
 
         tense_counts = olmo_training_data["[~tense~]_counts"]
         year_to_relative_counts = {year:{"past":(tense_counts["was"] + tense_counts["were"]), "present":(tense_counts["is"] + tense_counts["are"]), "future":tense_counts["will"]} for year in range(1000, 3000)}
+        
+        if plot:
+            self.plot_kl_divergence_by_year(
+                year_to_relative_counts, 
+                title="KL Divergence by Year: Be Verb Fallback vs OLMO Predictions",
+                save_path=save_path
+            )
+        
         return self.calculate_kl_divergence(year_to_relative_counts)
 
     
@@ -251,44 +373,44 @@ class KLDivergenceCaluclator:
 if __name__ == "__main__":
     # python discover_fallback_distributions.py
     kl_div = KLDivergenceCaluclator()
-    results = kl_div.co_occurrence_fallback()
+    results = kl_div.co_occurrence_fallback(plot=True, save_path="kl_divergence_co_occurrence_plot.png")
     print("\n\n co_occurrence_fallback")
     print(f"ID Average KL: {results['id_avg_kl']}, Years used: {len(results['id_years_used'])}")
     print(f"OOD Average KL: {results['ood_avg_kl']}, Years used: {len(results['ood_years_used'])}")
 
-    results = kl_div.avg_co_occurrence_fallback()
+    results = kl_div.avg_co_occurrence_fallback(plot=True, save_path="kl_divergence_avg_co_occurrence_plot.png")
     print("\n\n avg_co_occurrence_fallback")
     print(f"ID Average KL: {results['id_avg_kl']}, Years used: {len(results['id_years_used'])}")
     print(f"OOD Average KL: {results['ood_avg_kl']}, Years used: {len(results['ood_years_used'])}")
 
-    results = kl_div.exact_string_matching_fallback()
+    results = kl_div.exact_string_matching_fallback(plot=True, save_path="kl_divergence_exact_string_matching_plot.png")
     print("\n\n exact_string_matching_fallback")
     print(f"ID Average KL: {results['id_avg_kl']}, Years used: {len(results['id_years_used'])}")
     print(f"OOD Average KL: {results['ood_avg_kl']}, Years used: {len(results['ood_years_used'])}")
 
-    results = kl_div.avg_exact_string_matching_fallback()
+    results = kl_div.avg_exact_string_matching_fallback(plot=True, save_path="kl_divergence_avg_exact_string_matching_plot.png")
     print("\n\n avg_exact_string_matching_fallback")
     print(f"ID Average KL: {results['id_avg_kl']}, Years used: {len(results['id_years_used'])}")
     print(f"OOD Average KL: {results['ood_avg_kl']}, Years used: {len(results['ood_years_used'])}")
 
-    results = kl_div.uniform_distribution_fallback()
+    results = kl_div.uniform_distribution_fallback(plot=True, save_path="kl_divergence_uniform_distribution_plot.png")
     print("\n\n uniform_distribution_fallback")
     print(f"ID Average KL: {results['id_avg_kl']}, Years used: {len(results['id_years_used'])}")
     print(f"OOD Average KL: {results['ood_avg_kl']}, Years used: {len(results['ood_years_used'])}")
 
-    results = kl_div.be_verb_fallback()
+    results = kl_div.be_verb_fallback(plot=True, save_path="kl_divergence_be_verb_plot.png")
     print("\n\n be_verb_fallback")
     print(f"ID Average KL: {results['id_avg_kl']}, Years used: {len(results['id_years_used'])}")
     print(f"OOD Average KL: {results['ood_avg_kl']}, Years used: {len(results['ood_years_used'])}")
 
 
 
-    results = kl_div.co_occurrence_and_string_match_fallback()
+    results = kl_div.co_occurrence_and_string_match_fallback(plot=True, save_path="kl_divergence_co_occurrence_and_string_match_plot.png")
     print("\n\n co_occurrence_and_string_match_fallback")
     print(f"ID Average KL: {results['id_avg_kl']}, Years used: {len(results['id_years_used'])}")
     print(f"OOD Average KL: {results['ood_avg_kl']}, Years used: {len(results['ood_years_used'])}")
 
-    results = kl_div.avg_co_occurrence_and_string_match_fallback()
+    results = kl_div.avg_co_occurrence_and_string_match_fallback(plot=True, save_path="kl_divergence_avg_co_occurrence_and_string_match_plot.png")
     print("\n\n avg_co_occurrence_and_string_match_fallback")
     print(f"ID Average KL: {results['id_avg_kl']}, Years used: {len(results['id_years_used'])}")
     print(f"OOD Average KL: {results['ood_avg_kl']}, Years used: {len(results['ood_years_used'])}")
