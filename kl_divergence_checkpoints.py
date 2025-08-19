@@ -5,7 +5,6 @@ from scipy.stats import entropy
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-
 TRAINING_DATA_FILE = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-10000/analytics/1000-3000__was.were.is.are.will__aggregated_results_steps0-10000.json" 
 CHECKPOINT_DIR = "../olmo_predictions/output_checkpoints"
 
@@ -127,52 +126,32 @@ class KLAnalyzer:
         bin_kl = {label: [] for label in bin_labels}
         bin_counts = {label: 0 for label in bin_labels}
 
+        # Include a fixed zero-count bucket for global prior only
+        if prior_method == "global":
+            zero_label = "freq 0"
+            bin_kl[zero_label] = []
+            bin_counts[zero_label] = 0
+            bin_labels = [zero_label] + bin_labels  # prepend to maintain plotting order
+
         for y in model.keys():
             if y not in train:
                 continue
             total_count = sum(self.training_data[self.data_source].get(y, {}).get(k,0) for k in ["was","were","is","are","will"])
-            for (low, high), label in zip(bin_edges, bin_labels):
+            # assign KL to zero bucket if count = 0 and global
+            if prior_method == "global" and total_count == 0:
+                kl_val = self.kl_divergence_from_dicts(train[y], model[y])
+                bin_kl[zero_label].append(kl_val)
+                bin_counts[zero_label] += 1
+                continue
+            # assign KL to regular bins
+            for (low, high), label in zip(bin_edges, bin_labels[1:] if prior_method=="global" else bin_labels):
                 if low <= total_count < high:
-                    bin_kl[label].append(self.kl_divergence_from_dicts(train[y], model[y]))
+                    kl_val = self.kl_divergence_from_dicts(train[y], model[y])
+                    bin_kl[label].append(kl_val)
                     bin_counts[label] += 1
                     break
 
         return {label: (np.mean(vals) if vals else None, bin_counts[label]) for label, vals in bin_kl.items()}
-
-    def plot_avg_kl_by_bins(self, checkpoints, cutoffs=[4,10], prior_method="per_year"):
-        plt.figure(figsize=(12,5))
-        bin_edges = self._bin_edges(cutoffs)
-        bin_labels = [self._bin_label(low, high, cutoffs) for low, high in bin_edges]
-        bin_kl_over_ckpts = {label: [] for label in bin_labels}
-        bin_counts_per_label = {label: 0 for label in bin_labels}
-
-        for ckpt in checkpoints:
-            kl_by_bin = self.compute_avg_kl_by_bins(ckpt, cutoffs=cutoffs, prior_method=prior_method)
-            for label in bin_labels:
-                kl_val, count = kl_by_bin.get(label, (None, 0))
-                bin_kl_over_ckpts[label].append(kl_val)
-                bin_counts_per_label[label] = max(bin_counts_per_label[label], count)
-
-        # plot each bin
-        for label in bin_labels:
-            kl_vals = bin_kl_over_ckpts[label]
-            ckpts_filtered = [c for c, kl in zip(checkpoints, kl_vals) if kl is not None]
-            kl_filtered = [kl for kl in kl_vals if kl is not None]
-            label_with_count = f"{label} ({bin_counts_per_label[label]})" if bin_counts_per_label[label] > 0 else None
-            if label_with_count:
-                plt.plot(ckpts_filtered, kl_filtered, marker='o', label=label_with_count)
-
-        plt.xlabel("Checkpoint")
-        plt.ylabel("Average KL Divergence")
-        plt.title(f"Avg KL Divergence Trend | {self.data_source} | {prior_method}")
-        plt.ylim(0, 1.2)
-        plt.grid(True)
-        plt.legend(loc='upper right')
-        plt.tight_layout()
-        os.makedirs("checkpoints", exist_ok=True)
-        plt.savefig(f"checkpoints/avg_kl_by_bins_{cutoffs[0]}_{cutoffs[-1]}_{prior_method}.png")
-        plt.show()
-        plt.close()
 
 
     @staticmethod
@@ -194,82 +173,36 @@ class KLAnalyzer:
         else:
             return f"freq {low}-{high}"
 
-    def plot_avg_kl_by_bins_two_priors(self, checkpoints, cutoffs=[4,10]):
-        """
-        Plot KL by bins and prior method with lines and scatter points.
-        'per_year' bins in blue shades, 'global' bins in red shades.
-        """
-        import matplotlib.cm as cm
-
-        plt.figure(figsize=(12,5))
-        bin_edges = self._bin_edges(cutoffs)
-        bin_labels = [self._bin_label(low, high, cutoffs) for low, high in bin_edges]
-
-        prior_methods = ["per_year", "global"]
-        blue_colors = cm.Blues_r(np.linspace(1, 0.4, len(bin_labels)))  # darker = higher frequency
-        red_colors = cm.Reds_r(np.linspace(1, 0.4, len(bin_labels)))    # darker = higher frequency
-
-        colors = {
-            "per_year": blue_colors,
-            "global": red_colors
-        }
-
-        for prior_method in prior_methods:
-            bin_kl_over_ckpts = {label: [] for label in bin_labels}
-            bin_counts_per_label = {label: 0 for label in bin_labels}
-
-            # compute KL for all bins across checkpoints
-            for ckpt in checkpoints:
-                kl_by_bin = self.compute_avg_kl_by_bins(ckpt, cutoffs=cutoffs, prior_method=prior_method)
-                for label in bin_labels:
-                    kl_val, count = kl_by_bin.get(label, (None, 0))
-                    bin_kl_over_ckpts[label].append(kl_val)
-                    bin_counts_per_label[label] = max(bin_counts_per_label[label], count)
-
-            # plot bins with lines and scatter points
-            for label, color in zip(bin_labels, colors[prior_method]):
-                kl_vals = bin_kl_over_ckpts[label]
-                ckpts_filtered = [c for c, kl in zip(checkpoints, kl_vals) if kl is not None]
-                kl_filtered = [kl for kl in kl_vals if kl is not None]
-                if kl_filtered:
-                    label_with_count = f"{label} ({bin_counts_per_label[label]}) | {prior_method}"
-                    plt.plot(ckpts_filtered, kl_filtered, marker='o', markersize=4, label=label_with_count, color=color)  # lines + small markers
-
-        plt.xlabel("Checkpoint")
-        plt.ylabel("Average KL Divergence")
-        plt.title(f"Avg KL Divergence Over Training Checkpoints | {self.data_source}")
-        plt.ylim(0,1.2)
-        plt.grid(True)
-        plt.legend(loc='upper right', fontsize=8)
-        plt.tight_layout()
-        os.makedirs("checkpoints", exist_ok=True)
-        plt.savefig(f"checkpoints/avg_kl_by_bins_two_priors_lines_{cutoffs[0]}_{cutoffs[-1]}.png")
-        plt.show()
-        plt.close()
-
     def plot_avg_kl_by_bins_global_only(self, checkpoints, cutoffs=[4,10]):
         """
-        Plot KL by bins with lines and scatter points for global counts only.
+        Plot KL by bins with lines and scatter points for global counts only,
+        including a fixed freq 0 bin.
         """
         import matplotlib.cm as cm
-
         plt.figure(figsize=(12,5))
-        bin_edges = self._bin_edges(cutoffs)
-        bin_labels = [self._bin_label(low, high, cutoffs) for low, high in bin_edges]
-
-        bin_kl_over_ckpts = {label: [] for label in bin_labels}
-        bin_counts_per_label = {label: 0 for label in bin_labels}
 
         # compute KL for all bins across checkpoints
+        bin_kl_over_ckpts = {}
+        bin_counts_per_label = {}
         for ckpt in checkpoints:
             kl_by_bin = self.compute_avg_kl_by_bins(ckpt, cutoffs=cutoffs, prior_method="global")
-            for label in bin_labels:
-                kl_val, count = kl_by_bin.get(label, (None, 0))
+            # initialize keys on first checkpoint
+            if not bin_kl_over_ckpts:
+                for label in kl_by_bin:
+                    bin_kl_over_ckpts[label] = []
+                    bin_counts_per_label[label] = 0
+            for label, (kl_val, count) in kl_by_bin.items():
                 bin_kl_over_ckpts[label].append(kl_val)
                 bin_counts_per_label[label] = max(bin_counts_per_label[label], count)
 
+        # preserve the order including freq 0 first if exists
+        bin_labels = list(bin_kl_over_ckpts.keys())
+        if "freq 0" in bin_labels:
+            bin_labels.remove("freq 0")
+            bin_labels = ["freq 0"] + bin_labels
+
         # color map for global bins (reds)
-        colors = cm.Reds_r(np.linspace(1, 0.4, len(bin_labels)))  # invert intensity
+        colors = cm.Reds_r(np.linspace(1, 0.4, len(bin_labels)))  # dark = more frequent
 
         # plot bins with lines and scatter points
         for label, color in zip(bin_labels, colors):
@@ -298,22 +231,7 @@ if __name__ == "__main__":
     CHECKPOINTS = list(range(250, 10001, 250))
     PRIOR_METHOD =  "global"
 
-    # One plot at a time:
-    # COUNT_RANGES = [(1,10), (1,2), (2,3), (3, 4), (5, 1000)]
-    # for count_range in COUNT_RANGES:
-    #     avg_kl_values = [analyzer.compute_avg_kl_for_checkpoint(ckpt, count_range=count_range, prior_method=PRIOR_METHOD)
-    #                      for ckpt in CHECKPOINTS]
-    #     analyzer.plot_avg_kl_over_checkpoints(CHECKPOINTS, avg_kl_values, count_range=count_range)
-
-    # Many ranges at once, with cutoffs:
-    # PRIOR_METHOD =  "global"
-    # CUTOFFS = [2, 6, 10, 50, 100] # always pass cutoffs >1
-    # analyzer.plot_avg_kl_by_bins(CHECKPOINTS, cutoffs=CUTOFFS, prior_method=PRIOR_METHOD)
-   
-    # PRIOR_METHOD =  "per_year"
-    # analyzer.plot_avg_kl_by_bins(CHECKPOINTS, cutoffs=CUTOFFS, prior_method=PRIOR_METHOD)
-   
-
-    analyzer.plot_avg_kl_by_bins_two_priors(CHECKPOINTS, cutoffs=CUTOFFS)
+    CUTOFFS = [2, 6, 10, 50, 100] # always pass cutoffs >1.
+    # bug that i cant pass consecutive cutoffs i can fix later if needed
     analyzer.plot_avg_kl_by_bins_global_only(CHECKPOINTS, cutoffs=CUTOFFS)
 

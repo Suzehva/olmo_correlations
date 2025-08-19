@@ -66,18 +66,7 @@ def plot_kl_divergence(years, kl_values, olmo_training_data, data_source="in_yea
     
     # Get total counts for each year
     relative_counts = olmo_training_data[data_source]
-    # total_counts = []
     
-    # for year in years:
-    #     counts_per_year = relative_counts[year]
-    #     total_count = (counts_per_year.get("was", 0) + 
-    #                     counts_per_year.get("were", 0) + 
-    #                     counts_per_year.get("is", 0) + 
-    #                     counts_per_year.get("are", 0) + 
-    #                     counts_per_year.get("will", 0))
-
-    #     total_counts.append(total_count)
-
     filtered_years = []
     filtered_kl = []
     filtered_counts = []
@@ -100,7 +89,6 @@ def plot_kl_divergence(years, kl_values, olmo_training_data, data_source="in_yea
     kl_values = filtered_kl
     total_counts = filtered_counts
 
-    
     # Create plot
     plt.figure(figsize=(20, 6))
     
