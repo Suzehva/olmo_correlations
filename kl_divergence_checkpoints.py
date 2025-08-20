@@ -4,7 +4,7 @@ import numpy as np
 from scipy.stats import entropy
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
-
+from pathlib import Path
 
 MODEL_PREDICTIONS_FILE = "../olmo_predictions/output_checkpoints/checkpoint_{cp}.json"
 
@@ -19,7 +19,7 @@ COUNT_TYPE_TO_FILE = {
 
 TENSE_WORDS = ["was", "were", "is", "are", "will"]
 
-ID_OOD_FILE = "id_ood/in_ood_years_in_year_there_word_counts.json"  # keys: "in_distribution" and "ood"
+ID_OOD_FILE = "id_ood/in_ood_years_in_year_there_word_counts.json"  # keys: "in_distribution" and "ood". this was computed using cp 10000 and the "in year there word counts" method
 
 class KLAnalyzer:
     def __init__(self, checkpoint_dir, data_source="in_year_there_word_counts", year_range=(1000,2999)):
@@ -247,13 +247,93 @@ class KLAnalyzer:
         plt.close()
 
 
+
+
+    def plot_training_vs_model_stacked(self, count_type, checkpoints, output_dir="checkpoints"):
+        print("plotting stacked training vs model distributions")
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+        if count_type not in self.relative_training_data:
+            raise ValueError(f"{count_type} not found in relative_training_data. "
+                            f"Available: {list(self.relative_training_data.keys())}")
+
+        train_data = self.relative_training_data[count_type]
+        model_data = self.relative_model_data
+
+        tenses = ["past", "present", "future"]
+        colors = {"past": "orange", "present": "green", "future": "purple"}
+
+        for ckpt in checkpoints:
+            if ckpt not in model_data:
+                print(f"No model data for checkpoint {ckpt}")
+                continue
+
+            train_cp_data = train_data[ckpt]
+            model_cp_data = model_data[ckpt]
+            years = sorted(train_cp_data.keys())
+            ind = np.arange(len(years))
+
+            fig, axes = plt.subplots(1, 2, figsize=(16, 6), sharey=True)
+
+            # ---- Training Data ----
+            bottom = np.zeros(len(years))
+            for tense in tenses:
+                vals = np.array([
+                    train_cp_data[y].get(tense, 0) if train_cp_data[y] else 0 
+                    for y in years
+                ])
+                year_totals = np.array([
+                    sum(train_cp_data[y].values()) if train_cp_data[y] else 1
+                    for y in years
+                ])
+                vals = vals / year_totals
+                axes[0].bar(ind, vals, bottom=bottom, label=tense, color=colors[tense])
+                bottom += vals
+            axes[0].set_title("Training Data | {count_type}")
+            axes[0].set_xticks(ind[::50])
+            axes[0].set_xticklabels(years[::50], rotation=45)
+            axes[0].set_ylabel("Probability")
+            axes[0].legend()
+
+            # ---- Model Data ----
+            bottom = np.zeros(len(years))
+            for tense in tenses:
+                vals = np.array([
+                    model_cp_data[y].get(tense, 0) if model_cp_data[y] else 0
+                    for y in years
+                ])
+                year_totals = np.array([
+                    sum(model_cp_data[y].values()) if model_cp_data[y] else 1
+                    for y in years
+                ])
+                vals = vals / year_totals
+                axes[1].bar(ind, vals, bottom=bottom, label=tense, color=colors[tense])
+                bottom += vals
+            axes[1].set_title(f"Model Checkpoint {ckpt}")
+            axes[1].set_xticks(ind[::50])
+            axes[1].set_xticklabels(years[::50], rotation=45)
+
+            fig.suptitle(f"Year Distributions | Stacked Bars | Checkpoint {ckpt}")
+            plt.tight_layout()
+            plt.savefig(f"{output_dir}/stacked_year_distribution_ckpt{ckpt}_{count_type}.png", dpi=300)
+            plt.show()
+            plt.close()
+
+
+
+
+
 if __name__ == "__main__":
 
     analyzer = KLAnalyzer(MODEL_PREDICTIONS_FILE)
 
-    # Use averaged exact string matching
-    analyzer.plot_kl_over_checkpoints_for_count_type("exact_str_matching_avg")
+    # # Use averaged exact string matching
+    # analyzer.plot_kl_over_checkpoints_for_count_type("exact_str_matching_avg")
 
-    # Use string match cooccurrence
-    analyzer.plot_kl_over_checkpoints_for_count_type("string_match_cooccur")
+    # # Use string match cooccurrence
+    # analyzer.plot_kl_over_checkpoints_for_count_type("string_match_cooccur")
 
+    # sanity check plots
+    checkpoints_to_plot = [2000, 5000, 8000]
+    analyzer.plot_training_vs_model_stacked('exact_str_matching_avg', checkpoints_to_plot)
+    analyzer.plot_training_vs_model_stacked("string_match_cooccur", checkpoints_to_plot)
