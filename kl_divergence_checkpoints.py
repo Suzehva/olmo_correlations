@@ -192,6 +192,11 @@ if __name__ == "__main__":
     analyzer = KLAnalyzer(TRAINING_DATA_FILE, CHECKPOINT_DIR, "in_year_there_word_counts")
     analyzer.plot_kl_over_checkpoints(CHECKPOINTS)
 
-    # need the new key for this!!
+    # need the new data key for this!!
     # analyzer2 = KLAnalyzer(TRAINING_DATA_FILE, CHECKPOINT_DIR, "in_year_coocur_word_count")
     # analyzer2.plot_kl_over_checkpoints(CHECKPOINTS)
+
+
+# we should discuss it tomorrow and change it if necessary. it makes more sense to me to actually use 
+# the avg training data count per checkpoint compared to the model prediction per checkpoint.
+# instead of fixing training data at cp10000
