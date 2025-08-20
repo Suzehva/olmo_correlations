@@ -7,6 +7,8 @@ import matplotlib.cm as cm
 
 TRAINING_DATA_FILE = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-10000/analytics/1000-3000__was.were.is.are.will__aggregated_results_steps0-10000.json" 
 CHECKPOINT_DIR = "../olmo_predictions/output_checkpoints"
+ID_OOD_FILE = "id_ood/in_ood_years_in_year_there_word_counts.json" # keys "in_distribution" and "ood"
+
 
 class KLAnalyzer:
     def __init__(self, training_data_file, checkpoint_dir, data_source, year_range=(1000,2999)):
@@ -17,6 +19,64 @@ class KLAnalyzer:
 
         with open(training_data_file, "r") as f:
             self.training_data = json.load(f)
+
+    def get_in_and_ood_years(self, output_dir="output"):
+        """
+        Return two lists: (in_distribution_years, ood_years).
+        Also saves them into a JSON file.
+        """
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+
+        in_years = []
+        ood_years = []
+        for year, counts in self.training_data[self.data_source].items():
+            total = sum(counts.get(k, 0) for k in ["was", "were", "is", "are", "will"])
+            if total == 0:
+                ood_years.append(int(year))
+            else:
+                in_years.append(int(year))
+
+        out_path = os.path.join(output_dir, f"in_ood_years_{self.data_source}.json")
+        with open(out_path, "w") as f:
+            json.dump({"in_distribution": in_years, "ood": ood_years}, f, indent=4)
+
+        print(f"Saved in/ood years to {out_path}")
+        return in_years, ood_years
+
+    def get_in_and_ood_years_from_checkpoint(self, ckpt=10000, output_dir="output"):
+        """
+        Return two lists: (in_distribution_years, ood_years) based on a specific checkpoint.
+        Also saves them into a JSON file.
+        """
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+
+        pred_file = os.path.join(self.checkpoint_dir, f"checkpoint_{ckpt}.json")
+        if not os.path.exists(pred_file):
+            raise FileNotFoundError(f"Checkpoint file not found: {pred_file}")
+
+        with open(pred_file, "r") as f:
+            predictions = json.load(f)
+
+        in_years = []
+        ood_years = []
+
+        for year, counts in predictions.items():
+            if year == "metadata":
+                continue
+            total = sum(counts.get(k, 0) for k in ["was", "were", "is", "are", "will"])
+            if total == 0:
+                ood_years.append(int(year))
+            else:
+                in_years.append(int(year))
+
+        out_path = os.path.join(output_dir, f"in_ood_years_checkpoint_{ckpt}_{self.data_source}.json")
+        with open(out_path, "w") as f:
+            json.dump({"in_distribution": in_years, "ood": ood_years}, f, indent=4)
+
+        print(f"Saved in/ood years for checkpoint {ckpt} to {out_path}")
+        return in_years, ood_years
 
     @staticmethod
     def kl_divergence_from_dicts(dist_p, dist_q, epsilon=1e-12):
@@ -153,7 +213,6 @@ class KLAnalyzer:
 
         return {label: (np.mean(vals) if vals else None, bin_counts[label]) for label, vals in bin_kl.items()}
 
-
     @staticmethod
     def _bin_edges(cutoffs):
         bins = []
@@ -201,8 +260,11 @@ class KLAnalyzer:
             bin_labels.remove("freq 0")
             bin_labels = ["freq 0"] + bin_labels
 
-        # color map for global bins (reds)
-        colors = cm.Reds_r(np.linspace(1, 0.4, len(bin_labels)))  # dark = more frequent
+        # For OOD (reds) → darkest red at lowest freq
+        reds = cm.Reds(np.linspace(0.9, 0.4, len(bin_labels)))
+
+        # For prior / distribution (blues) → darkest blue at lowest freq
+        blues = cm.Blues(np.linspace(0.9, 0.4, len(bin_labels)))
 
         # plot bins with lines and scatter points
         for label, color in zip(bin_labels, colors):
@@ -226,12 +288,17 @@ class KLAnalyzer:
         plt.close()
 
 
+
 if __name__ == "__main__":
+
+    # CUTOFFS = [0, 0] # always pass cutoffs >1.
+    # # bug that i cant pass consecutive cutoffs i can fix later if needed
+    # analyzer.plot_avg_kl_by_bins_global_only(CHECKPOINTS, cutoffs=CUTOFFS)
+
     analyzer = KLAnalyzer(TRAINING_DATA_FILE, CHECKPOINT_DIR, "in_year_there_word_counts")
     CHECKPOINTS = list(range(250, 10001, 250))
-    PRIOR_METHOD =  "global"
+    analyzer.plot_avg_kl_zero_vs_nonzero(CHECKPOINTS)
 
-    CUTOFFS = [2, 6, 10, 50, 100] # always pass cutoffs >1.
-    # bug that i cant pass consecutive cutoffs i can fix later if needed
-    analyzer.plot_avg_kl_by_bins_global_only(CHECKPOINTS, cutoffs=CUTOFFS)
 
+    # analyzer = KLAnalyzer(TRAINING_DATA_FILE, CHECKPOINT_DIR, "in_year_there_word_counts")
+    # in_years, ood_years = analyzer.get_in_and_ood_years_from_checkpoint()
