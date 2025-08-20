@@ -5,25 +5,170 @@ from scipy.stats import entropy
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 
-TRAINING_DATA_FILE = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-10000/analytics/1000-3000__was.were.is.are.will__aggregated_results_steps0-10000.json" 
-CHECKPOINT_DIR = "../olmo_predictions/output_checkpoints"
+
+MODEL_PREDICTIONS_FILE = "../olmo_predictions/output_checkpoints/checkpoint_{cp}.json"
+
+TRAINING_DATA_FILE_1 = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-{cp}/analytics/1000-3000__was.were.is.are.will__aggregated_results_steps0-{cp}.json"
+TRAINING_DATA_FILE_2 = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-{cp}/extra_analytics/1000-3000__was.were.is.are.will__extra_aggregated_results_steps0-{cp}.json"
+
+
+COUNT_TYPE_TO_FILE = {
+    "exact_str_matching": (TRAINING_DATA_FILE_1, "in_year_there_word_counts"),
+    "string_match_cooccur": (TRAINING_DATA_FILE_2, "in_year_tense_sentence_counts")
+}
+
+TENSE_WORDS = ["was", "were", "is", "are", "will"]
+
 ID_OOD_FILE = "id_ood/in_ood_years_in_year_there_word_counts.json"  # keys: "in_distribution" and "ood"
 
-
 class KLAnalyzer:
-    def __init__(self, training_data_file, checkpoint_dir, data_source="in_year_there_word_counts", year_range=(1000,2999)):
-        self.training_data_file = training_data_file
+    def __init__(self, checkpoint_dir, data_source="in_year_there_word_counts", year_range=(1000,2999)):
         self.checkpoint_dir = checkpoint_dir
         self.data_source = data_source
         self.year_range = year_range
+        self.year_range = year_range
+        self.absolute_training_data = {}
+        self.relative_training_data = {}
+        self.model_data = {}
+        self.relative_model_data = {}
 
-        with open(training_data_file, "r") as f:
-            self.training_data = json.load(f)
+        # loads absolute first, then relative
+        print("loading all data")
+        self.load_relative_training_data("exact_str_matching")
+        self.load_avg_training_data("exact_str_matching") # self.relative_training_data[count_type_avg][cp][year]["was"]
+        self.load_relative_training_data("string_match_cooccur") # self.relative_training_data[count_type][cp][year]["was"]
+        self.load_relative_model_data() # self.relative_model_data[cp][year]["was"]
 
         with open(ID_OOD_FILE, "r") as f:
             id_ood = json.load(f)
             self.in_years = [str(y) for y in id_ood["in_distribution"]]
             self.ood_years = [str(y) for y in id_ood["ood"]]
+
+    def load_absolute_training_data(self, count_type):
+        file_template, data_source = COUNT_TYPE_TO_FILE[count_type]
+        results = {}
+
+        for cp in range(250, 10001, 250):
+            cp_index = cp
+            if cp % 100 == 50:
+                cp_index += 10 # for the weird 60-issue
+            filepath = file_template.format(cp=cp_index)
+            print(f"loading training file {filepath[-45:]}")
+            if not os.path.exists(filepath):
+                print(f"cound not find {filepath}")
+                continue
+            with open(filepath, "r") as f:
+                data = json.load(f)
+
+            year_to_counts = {}
+            for year, counts in data[data_source].items():
+                year_int = int(year)
+                if not (self.year_range[0] <= year_int <= self.year_range[1]):
+                    continue
+                year_to_counts[year] = {w: counts.get(w, 0) for w in TENSE_WORDS}
+
+            results[cp] = year_to_counts
+
+        self.absolute_training_data[count_type] = results
+
+    def load_relative_training_data(self, count_type):
+        if count_type not in self.absolute_training_data:
+            self.load_absolute_training_data(count_type)
+
+        abs_data = self.absolute_training_data[count_type]
+        results = {}
+
+        for cp, year_dict in abs_data.items():
+            year_to_probs = {}
+            for year, counts in year_dict.items():
+                total = sum(counts.values())
+                if total == 0:
+                    year_to_probs[year] = {"past": 0, "present": 0, "future": 0}
+                else:
+                    year_to_probs[year] = {
+                        "past": (counts["was"] + counts["were"]) / total,
+                        "present": (counts["is"] + counts["are"]) / total,
+                        "future": counts["will"] / total
+                    }
+            results[cp] = year_to_probs
+
+        self.relative_training_data[count_type] = results
+
+    def load_avg_training_data(self, count_type):
+        if count_type not in self.absolute_training_data:
+            self.load_absolute_training_data(count_type)
+
+        abs_data = self.absolute_training_data[count_type]
+        results = {}
+
+        for cp, year_dict in abs_data.items():
+            # sum all words across the entire year range
+            total_counts = {"was": 0, "were": 0, "is": 0, "are": 0, "will": 0}
+            for counts in year_dict.values():
+                for w in TENSE_WORDS:
+                    total_counts[w] += counts.get(w, 0)
+
+            grand_total = sum(total_counts.values())
+            if grand_total == 0:
+                avg_probs = {"past": 0, "present": 0, "future": 0}
+            else:
+                avg_probs = {
+                    "past": (total_counts["was"] + total_counts["were"]) / grand_total,
+                    "present": (total_counts["is"] + total_counts["are"]) / grand_total,
+                    "future": total_counts["will"] / grand_total,
+                }
+
+            # put the same value for every year in this checkpoint
+            year_to_avg = {year: avg_probs for year in year_dict.keys()}
+            results[cp] = year_to_avg
+
+        # store under new key, e.g. "exact_str_matching_avg"
+        avg_key = f"{count_type}_avg"
+        self.relative_training_data[avg_key] = results
+
+    def load_model_data(self):
+        results = {}
+
+        for cp in range(250, 10001, 250):
+            filepath = MODEL_PREDICTIONS_FILE.format(cp=cp)
+            print(f"loading model data file {filepath[-20:]}")
+            if not os.path.exists(filepath):
+                continue
+            with open(filepath, "r") as f:
+                data = json.load(f)
+
+            year_to_probs = {}
+            for year, counts in data["data"].items():
+                year_int = int(year)
+                if not (self.year_range[0] <= year_int <= self.year_range[1]):
+                    continue
+                year_to_probs[year] = {w: counts.get(w, 0.0) for w in TENSE_WORDS}
+
+            results[cp] = year_to_probs
+
+        self.model_data = results
+
+    def load_relative_model_data(self):
+        if not self.model_data:
+            self.load_model_data()
+
+        results = {}
+        for cp, year_dict in self.model_data.items():
+            year_to_rel = {}
+            for year, counts in year_dict.items():
+                total = sum(counts.values())
+                if total == 0:
+                    year_to_rel[year] = {"past": 0, "present": 0, "future": 0}
+                else:
+                    year_to_rel[year] = {
+                        "past": (counts["was"] + counts["were"]) / total,
+                        "present": (counts["is"] + counts["are"]) / total,
+                        "future": counts["will"] / total
+                    }
+            results[cp] = year_to_rel
+
+        self.relative_model_data = results
+
 
     @staticmethod
     def kl_divergence_from_dicts(dist_p, dist_q, epsilon=1e-12):
@@ -35,168 +180,80 @@ class KLAnalyzer:
         q = np.maximum(q, epsilon) / np.sum(np.maximum(q, epsilon))
         return entropy(p, q)
 
-    def get_relative_probabilities(self, predictions):
-        if self.data_source == "in_year_there_word_counts":
-            return self.get_relative_probabilities_global(predictions)
-        else:
-            return self.get_relative_probabilities_per_year(predictions)
-
-    def get_relative_probabilities_global(self, predictions):
-        # compute model probabilities
-        year_to_model = {}
-        normalized = predictions.get("normalized_data", predictions)
-        for year, rel in normalized.items():
-            year_int = int(year)
-            if not (self.year_range[0] <= year_int <= self.year_range[1]):
-                continue
-            year_to_model[year] = {
-                "past": rel.get("was", 0) + rel.get("were", 0),
-                "present": rel.get("is", 0) + rel.get("are", 0),
-                "future": rel.get("will", 0)
-            }
-
-        # global training distribution
-        total_counts = {"was":0,"were":0,"is":0,"are":0,"will":0}
-        for year, counts in self.training_data[self.data_source].items():
-            year_int = int(year)
-            if not (self.year_range[0] <= year_int <= self.year_range[1]):
-                continue
-            for k in total_counts:
-                total_counts[k] += counts.get(k,0)
-        total_sum = sum(total_counts.values())
-        global_probs = {
-            "past": (total_counts["was"] + total_counts["were"])/total_sum,
-            "present": (total_counts["is"] + total_counts["are"])/total_sum,
-            "future": total_counts["will"]/total_sum
-        }
-        year_to_train = {year: global_probs for year in year_to_model.keys()}
-
-        return year_to_model, year_to_train
-
-    def get_relative_probabilities_per_year(self, predictions):
-        # compute model probabilities
-        year_to_model = {}
-        normalized = predictions.get("normalized_data", predictions)
-        for year, rel in normalized.items():
-            year_int = int(year)
-            if not (self.year_range[0] <= year_int <= self.year_range[1]):
-                continue
-            year_to_model[year] = {
-                "past": rel.get("was", 0) + rel.get("were", 0),
-                "present": rel.get("is", 0) + rel.get("are", 0),
-                "future": rel.get("will", 0)
-            }
-
-        # per-year training distribution
-        year_to_train = {}
-        for year, counts in self.training_data[self.data_source].items():
-            year_int = int(year)
-            if not (self.year_range[0] <= year_int <= self.year_range[1]):
-                continue
-            total = sum(counts.get(k,0) for k in ["was","were","is","are","will"])
-            if total == 0:
-                year_to_train[year] = {"past":0,"present":0,"future":0}
-            else:
-                year_to_train[year] = {
-                    "past": (counts.get("was",0)+counts.get("were",0))/total,
-                    "present": (counts.get("is",0)+counts.get("are",0))/total,
-                    "future": counts.get("will",0)/total
-                }
-
-        return year_to_model, year_to_train
-
-    def compute_kl_in_vs_ood(self, ckpt=10000):
+    def plot_kl_over_checkpoints_for_count_type(self, count_type):
         """
-        Compute average KL divergence for two hardcoded buckets:
-        in-distribution vs out-of-distribution, using checkpoint predictions.
+        Compute and plot KL divergence over checkpoints for a given relative training count type.
+        Args:
+            checkpoints (list[int]): checkpoints to evaluate
+            count_type (str): key in self.relative_training_data 
+                              (e.g. 'exact_str_matching', 'exact_str_matching_avg', 'string_match_cooccur')
         """
+        if count_type not in self.relative_training_data:
+            raise ValueError(f"{count_type} not found in relative_training_data. "
+                             f"Available: {list(self.relative_training_data.keys())}")
 
-        # this helps me make the json file for in vs out of distr
-
-        pred_file = os.path.join(self.checkpoint_dir, f"checkpoint_{ckpt}.json")
-        if not os.path.exists(pred_file):
-            raise FileNotFoundError(f"Checkpoint file not found: {pred_file}")
-
-        with open(pred_file, "r") as f:
-            predictions = json.load(f)
-
-        model, train = self.get_relative_probabilities(predictions)
-
-        kl_in = []
-        kl_ood = []
-
-        for year, probs in model.items():
-            kl_val = self.kl_divergence_from_dicts(train[year], probs)
-            if year in self.in_years:
-                kl_in.append(kl_val)
-            elif year in self.ood_years:
-                kl_ood.append(kl_val)
-
-        avg_kl_in = np.mean(kl_in) if kl_in else None
-        avg_kl_ood = np.mean(kl_ood) if kl_ood else None
-
-        # print(f"Checkpoint {ckpt} KL divergence:")
-        # print(f"  ID years: {avg_kl_in} (n={len(kl_in)})")
-        # print(f"  OOD years: {avg_kl_ood} (n={len(kl_ood)})")
-
-        return {"in_distribution": (avg_kl_in, len(kl_in)),
-                "ood": (avg_kl_ood, len(kl_ood))}
-
-
-    def plot_kl_over_checkpoints(self, checkpoints):
-        """
-        Compute and plot KL divergence over all checkpoints for:
-        - In-distribution (blue)
-        - Out-of-distribution (red)
-        """
-        with open(ID_OOD_FILE, "r") as f:
-            id_ood = json.load(f)
-            in_years = [str(y) for y in id_ood["in_distribution"]]
-            ood_years = [str(y) for y in id_ood["ood"]]
+        checkpoints = range(250, 10001, 250)
+        print(f"plotting kl over checkpoints for {count_type}")
 
         kl_in_over_ckpt = []
         kl_ood_over_ckpt = []
 
         for ckpt in checkpoints:
-            kl_vals = self.compute_kl_in_vs_ood(ckpt)
-            kl_in_over_ckpt.append(kl_vals["in_distribution"][0])  # avg KL for in-distribution
-            kl_ood_over_ckpt.append(kl_vals["ood"][0])             # avg KL for OOD
 
-        # update data count type name for the plots
-        if self.data_source=="in_year_there_word_counts":
-            ds_label = "Exact string match method (avg.)"
-        elif self.data_source=="in_year_cooccurence":  
-            ds_label = "String match + cooccurence method"
-        else:
-            ds_label = self.data_source
+            if ckpt not in self.relative_model_data:
+                print(f"no model data at {ckpt}")
+                continue
+            if ckpt not in self.relative_training_data[count_type]:
+                print(f"no train data at {ckpt}")
+                continue
 
+            train = self.relative_training_data[count_type][ckpt]
+            model = self.relative_model_data[ckpt]
+
+            # debug : Dump some data to a file for inspection
+            # dump = {"train": train, "model": model}
+            # with open(f"debug_counts_cp{ckpt}.json", "w") as f:
+            #     json.dump(dump, f, indent=2)
+
+            kl_in = []
+            kl_ood = []
+
+            for year, probs_model in model.items():
+                if year not in train:
+                    continue
+                kl_val = self.kl_divergence_from_dicts(train[year], probs_model)
+                if year in self.in_years:
+                    kl_in.append(kl_val)
+                elif year in self.ood_years:
+                    kl_ood.append(kl_val)
+
+            kl_in_over_ckpt.append(np.mean(kl_in) if kl_in else None)
+            kl_ood_over_ckpt.append(np.mean(kl_ood) if kl_ood else None)
+
+        # --- Plot ---
         plt.figure(figsize=(12,5))
         plt.plot(checkpoints, kl_in_over_ckpt, marker='o', color='blue', label='In-distribution')
         plt.plot(checkpoints, kl_ood_over_ckpt, marker='o', color='red', label='Out-of-distribution')
         plt.xlabel("Checkpoint")
         plt.ylabel("Average KL Divergence")
-        plt.title(f"KL Divergence Over Checkpoints | {ds_label}")
+        plt.title(f"KL Divergence Over Checkpoints | {count_type}")
         plt.ylim(0, 1.2)
         plt.grid(True)
         plt.legend(loc='upper right')
         os.makedirs("checkpoints", exist_ok=True)
         plt.tight_layout()
-        plt.savefig(f"checkpoints/kl_in_vs_ood_over_checkpoints_{ds_label}.png")
+        plt.savefig(f"checkpoints/kl_in_vs_ood_over_checkpoints_{count_type}.png")
         plt.show()
         plt.close()
 
 
 if __name__ == "__main__":
-    CHECKPOINTS = list(range(250, 10001, 250)) 
 
-    analyzer = KLAnalyzer(TRAINING_DATA_FILE, CHECKPOINT_DIR, "in_year_there_word_counts")
-    analyzer.plot_kl_over_checkpoints(CHECKPOINTS)
+    analyzer = KLAnalyzer(MODEL_PREDICTIONS_FILE)
 
-    # need the new data key for this!!
-    # analyzer2 = KLAnalyzer(TRAINING_DATA_FILE, CHECKPOINT_DIR, "in_year_coocur_word_count")
-    # analyzer2.plot_kl_over_checkpoints(CHECKPOINTS)
+    # Use averaged exact string matching
+    analyzer.plot_kl_over_checkpoints_for_count_type("exact_str_matching_avg")
 
+    # Use string match cooccurrence
+    analyzer.plot_kl_over_checkpoints_for_count_type("string_match_cooccur")
 
-# we should discuss it tomorrow and change it if necessary. it makes more sense to me to actually use 
-# the avg training data count per checkpoint compared to the model prediction per checkpoint.
-# instead of fixing training data at cp10000
