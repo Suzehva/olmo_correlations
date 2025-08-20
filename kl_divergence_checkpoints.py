@@ -3,6 +3,7 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+from scipy.stats import spearmanr
 
 MODEL_PREDICTIONS_FILE = "../olmo_predictions/output_checkpoints/checkpoint_{cp}.json"
 
@@ -18,8 +19,8 @@ COUNT_TYPE_TO_FILE = {
 TENSE_MAPPING = {
     "was": "past",
     "were": "past",
-    # "is": "present",
-    # "are": "present",
+    "is": "present",
+    "are": "present",
     "will": "future",
 }
 
@@ -77,7 +78,7 @@ class SpearmanAnalyzer:
             if cp % 100 == 50:
                 cp_index += 10
             filepath = file_template.format(cp=cp_index)
-            print(f"loading training file {filepath[-45:]}")
+            # print(f"loading training file {filepath[-45:]}")
             if not os.path.exists(filepath):
                 print(f"cound not find {filepath}")
                 continue
@@ -150,7 +151,7 @@ class SpearmanAnalyzer:
         results = {}
         for cp in range(250, 10001, 250):
             filepath = MODEL_PREDICTIONS_FILE.format(cp=cp)
-            print(f"loading model data file {filepath[-20:]}")
+            # print(f"loading model data file {filepath[-20:]}")
             if not os.path.exists(filepath):
                 continue
             with open(filepath, "r") as f:
@@ -233,12 +234,63 @@ class SpearmanAnalyzer:
 
             fig.suptitle(f"Year Distributions | Stacked Bars | Checkpoint {ckpt}")
             plt.tight_layout()
-            plt.savefig(f"{output_dir}/{label}/stacked_year_distribution_ckpt{ckpt}_.png", dpi=300)
+            plt.savefig(f"{output_dir}/{label}/stacked_year_distribution_ckpt{ckpt}.png", dpi=300)
             plt.close()
 
 
 
-if __name__ == "__main__":
+    def plot_spearman_sliding_window(self, training_dict, tense, checkpoint, window=20, output_dir="spearman", label="exact_str_matching"):
+        """
+        Compute Spearman rank correlation between a training dict and model predictions
+        for a specific tense over a sliding window of years.
+
+        training_dict: dict like self.relative_training_data[...] or self.relative_human_gold
+        tense: "past", "present", or "future"
+        checkpoint: int checkpoint to use from model predictions
+        window: size of sliding window in years
+        """
+        if tense not in self.TENSE_ORDER:
+            raise ValueError(f"Tense '{tense}' not in defined tenses: {self.TENSE_ORDER}")
+        
+        if checkpoint not in self.relative_model_data:
+            raise ValueError(f"Checkpoint {checkpoint} not available in model data")
+
+        model_cp_data = self.relative_model_data[checkpoint]
+        train_cp_data = training_dict[checkpoint]
+
+        years = sorted(train_cp_data.keys())
+        spearman_vals = []
+        window_starts = []
+
+        for i in range(len(years) - window + 1):
+            win_years = years[i:i+window]
+
+            train_vals = [train_cp_data[y].get(tense, 0) for y in win_years]
+            model_vals = [model_cp_data[y].get(tense, 0) for y in win_years]
+
+            rho, _ = spearmanr(train_vals, model_vals)
+            spearman_vals.append(rho)
+            window_starts.append(int(win_years[0]))
+
+        # Plotting
+        Path(f"{output_dir}").mkdir(parents=True, exist_ok=True)
+        plt.figure(figsize=(12, 5))
+        plt.plot(window_starts, spearman_vals, marker='o', color=self.TENSE_COLORS[tense])
+        plt.xlabel(f"Starting Year of {window}-Year Window")
+        plt.ylabel("Spearman Rank Correlation")
+        plt.title(f"Spearman Rank Correlation ({tense}) | Checkpoint {checkpoint} | Counting method {label}")
+        plt.grid(True)
+
+        # Path(f"{output_dir}/{label}").mkdir(parents=True, exist_ok=True)
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/spearman_{tense}_ckpt{checkpoint}_window{window}_{label}.png", dpi=300)
+        plt.close()
+
+
+
+# PLOTTING FUNCTIONS
+
+def run_model_training_plots():
     YEAR_RANGE = (1950, 2200)
     analyzer = SpearmanAnalyzer(year_range=YEAR_RANGE)
 
@@ -247,3 +299,49 @@ if __name__ == "__main__":
     analyzer.plot_training_vs_model_stacked(analyzer.relative_training_data['exact_str_matching'], checkpoints_to_plot, label="exact_str_matching")
     analyzer.plot_training_vs_model_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints_to_plot, label="string_match_cooccur")
     analyzer.plot_training_vs_model_stacked(analyzer.relative_human_gold, checkpoints_to_plot, label="relative_human_gold")
+
+
+def run_spearman():
+
+    YEAR_RANGE = (1950, 2050)
+    smanalyzer = SpearmanAnalyzer(year_range=YEAR_RANGE)
+    smanalyzer.plot_spearman_sliding_window(
+        training_dict=smanalyzer.relative_human_gold,
+        tense="past",
+        checkpoint=10000,
+        window=20,
+        label="relative_human_gold"
+    )
+
+    smanalyzer.plot_spearman_sliding_window(
+        training_dict=smanalyzer.relative_training_data["string_match_cooccur"],
+        tense="past",
+        checkpoint=10000,
+        window=20,
+        label="string_match_cooccur"
+    )
+
+    smanalyzer.plot_spearman_sliding_window(
+        training_dict=smanalyzer.relative_training_data["exact_str_matching"],
+        tense="past",
+        checkpoint=10000,
+        window=20,
+        label="exact_str_matching"
+    )
+
+    smanalyzer.plot_spearman_sliding_window(
+        training_dict=smanalyzer.relative_training_data["exact_str_matching_avg"],
+        tense="past",
+        checkpoint=10000,
+        window=20,
+        label="exact_str_matching_avg"
+    )
+
+
+
+if __name__ == "__main__":
+    # python kl_divergence_checkpoints.py
+
+    run_model_training_plots()
+    run_spearman()
+
