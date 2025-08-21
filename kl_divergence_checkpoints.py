@@ -51,7 +51,7 @@ class SpearmanAnalyzer:
 
     # Add these class attributes for consistent plotting
     TENSE_ORDER = ["past", "present", "future"]  # strict plotting order
-    TENSE_COLORS = {"past": "orange", "present": "green", "future": "purple"}
+    TENSE_COLORS = {"past": "orange", "present": "purple", "future": "green"}
 
 
     def populate_gold_data(self):
@@ -274,7 +274,7 @@ class SpearmanAnalyzer:
             ax.set_ylabel("Probability")
             ax.legend()
 
-            save_path = f"{output_dir}/{label}/{self.year_range[0]}_{self.year_range{1}}/stacked_year_distribution_ckpt{ckpt}.png"
+            save_path = f"{output_dir}/{label}/{self.year_range[0]}_{self.year_range[1]}/stacked_year_distribution_ckpt{ckpt}.png"
             plt.tight_layout()
             plt.savefig(save_path, dpi=300)
             plt.close()
@@ -303,6 +303,8 @@ class SpearmanAnalyzer:
         spearman_vals = []
         window_starts = []
 
+
+        # inside your loop over windows
         for i in range(len(years) - window + 1):
             win_years = years[i:i+window]
 
@@ -311,13 +313,15 @@ class SpearmanAnalyzer:
 
             rho, _ = spearmanr(train_vals, model_vals)
             spearman_vals.append(rho)
-            window_starts.append(int(win_years[0]))
 
-        # Plotting
-        Path(f"{output_dir}").mkdir(parents=True, exist_ok=True)
+            # Use center year instead of starting year
+            center_year = int((int(win_years[0]) + int(win_years[-1])) / 2)
+            window_starts.append(center_year)
+
+        # Then plot as before
         plt.figure(figsize=(12, 5))
         plt.plot(window_starts, spearman_vals, marker='o', color=self.TENSE_COLORS[tense])
-        plt.xlabel(f"Starting Year of {window}-Year Window")
+        plt.xlabel(f"Center Year of {window}-Year Window")
         plt.ylabel("Spearman Rank Correlation")
         plt.title(f"Spearman Rank Correlation ({tense}) | Checkpoint {checkpoint} | Counting method {label}")
         plt.grid(True)
@@ -374,7 +378,6 @@ class SpearmanAnalyzer:
         """
         Compute Spearman correlation between two distributions over a sliding window.
         """
-
         years = [str(y) for y in range(start_year, start_year + window_size)]
         d1_vals, d2_vals = [], []
 
@@ -389,18 +392,18 @@ class SpearmanAnalyzer:
         d2_flat = [v for pair in d2_vals for v in pair]
 
         rho, _ = spearmanr(d1_flat, d2_flat)
-        return rho if rho == rho else 0.0
+        return rho if rho == rho else None  # return None if nan
 
 
     def plot_spearman_over_checkpoints(
         self, dict1, dict2, window_size, start_years,
-        label1="data 1", label2="dicdata 2t2", output_dir="spearman_cp"
+        label1="data 1", label2="data 2", output_dir="spearman_cp"
     ):
         """
         Plot Spearman rank correlation over checkpoints for different start years (sliding windows).
-        Optionally save to file if save_path is given.
+        Skip points where rho is None.
+        Use different marker shapes for start years before/after 2022.
         """
-
         checkpoints = sorted(dict1.keys())
         colors = plt.cm.tab10(np.linspace(0, 1, len(start_years)))
 
@@ -408,21 +411,30 @@ class SpearmanAnalyzer:
 
         for color, start_year in zip(colors, start_years):
             spearmans = []
+            valid_cps = []
             for cp in checkpoints:
                 rho = self.compute_spearman_window(dict1, dict2, cp, start_year, window_size)
-                spearmans.append(rho)
-            plt.plot(checkpoints, spearmans, marker="o", color=color, label=f"{start_year} - {start_year+window_size}")
+                if rho is not None:
+                    spearmans.append(rho)
+                    valid_cps.append(cp)
+
+            if spearmans:
+                marker_shape = "s" if start_year >= 2022 else "o"  # square for future, circle for past
+                plt.plot(valid_cps, spearmans, marker=marker_shape, color=color,
+                        label=f"{start_year} - {start_year+window_size}", linestyle='-')
 
         plt.xlabel("Checkpoint")
         plt.ylabel("Spearman correlation")
         plt.title(f"Spearman correlation over checkpoints ({label1} vs {label2})")
         plt.legend()
-        plt.ylim(-1, 1)  # fix y-axis from -1 to 1
+        plt.ylim(-1, 1)
 
         os.makedirs(f"{output_dir}", exist_ok=True)
         save_path = f"{output_dir}/comparing_{label1}_{label2}_window_{window_size}_years_{self.year_range[0]}_{self.year_range[1]}.png"
         plt.savefig(save_path, dpi=300)
         plt.close()
+
+
 
 
 #########################################################################################
@@ -438,22 +450,27 @@ def run_model_training_plots():
     analyzer.plot_training_vs_model_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints_to_plot, label="string_match_cooccur")
     analyzer.plot_training_vs_model_stacked(analyzer.relative_human_gold, checkpoints_to_plot, label="relative_human_gold")
 
+def plot_distribution():
+
+    analyzer = SpearmanAnalyzer(year_range=(1950, 2050))
+    checkpoints = [2000, 5000, 8000, 10000]
+    analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="string_match_cooccur")
+    analyzer.plot_single_distribution_stacked(analyzer.relative_model_data, checkpoints, label="relative_model_data")
+
+    analyzer_full= SpearmanAnalyzer(year_range=(1600, 2200))
+    checkpoints = [2000, 5000, 8000, 10000]
+    analyzer_full.plot_single_distribution_stacked(analyzer_full.relative_training_data["string_match_cooccur"], checkpoints, label="string_match_cooccur")
+    analyzer_full.plot_single_distribution_stacked(analyzer_full.relative_model_data, checkpoints, label="relative_model_data")
+
 
 def run_spearman():
 
-    smanalyzer = SpearmanAnalyzer(year_range=(1950, 2050))
+    # smanalyzer = SpearmanAnalyzer(year_range=(1950, 2050))
+    smanalyzer = SpearmanAnalyzer(year_range=(1800, 2200))
 
     smanalyzer.plot_spearman_sliding_window(
         training_dict=smanalyzer.relative_training_data["string_match_cooccur"],
-        tense="future",
-        checkpoint=10000,
-        window=20,
-        label="string_match_cooccur"
-    )
-
-    smanalyzer.plot_spearman_sliding_window(
-        training_dict=smanalyzer.relative_training_data["string_match_cooccur"],
-        tense="future",
+        tense="past",
         checkpoint=10000,
         window=50,
         label="string_match_cooccur"
@@ -494,35 +511,29 @@ def run_training_dynamics():
         label2="relative_human_gold"
     )
 
-    analyser.plot_spearman_over_checkpoints(
-        analyser.relative_model_data,
-        analyser.relative_training_data["string_match_cooccur"],
-        window_size=20,
-        start_years=[1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020, 2030],
-        label1="Model",
-        label2="string_match_cooccur"
-    )  
+    # analyser.plot_spearman_over_checkpoints(
+    #     analyser.relative_model_data,
+    #     analyser.relative_training_data["string_match_cooccur"],
+    #     window_size=20,
+    #     start_years=[1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020, 2030],
+    #     label1="Model",
+    #     label2="string_match_cooccur"
+    # )  
+    
 
-    analyser.plot_spearman_over_checkpoints(
-        analyser.relative_human_gold,
-        analyser.relative_training_data["exact_str_matching_avg"],
-        window_size=20,
-        start_years=[1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020, 2030],
-        label1="Model",
-        label2="exact_str_matching_avg"
-    )
+    # for working on specific ranges ood
+    # year_range=(2350, 2450)
+    # oodanalyser = SpearmanAnalyzer(year_range=year_range)
 
-def plot_distribution():
+    # oodanalyser.plot_spearman_over_checkpoints(
+    #     oodanalyser.relative_model_data,
+    #     oodanalyser.relative_training_data["string_match_cooccur"],
+    #     window_size=20,
+    #     start_years=range(year_range[0], year_range[1]-10, 10), # every 10 yr increment in range, leaving 20 at the end for the window
+    #     label1="Model",
+    #     label2="string_match_cooccur"
+    # )  
 
-    analyzer = SpearmanAnalyzer(year_range=(1950, 2050))
-    checkpoints = [2000, 5000, 8000, 10000]
-    analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="string_match_cooccur")
-    analyzer.plot_single_distribution_stacked(analyzer.relative_model_data, checkpoints, label="relative_model_data")
-
-    analyzer_full= SpearmanAnalyzer(year_range=(1600, 2200))
-    checkpoints = [2000, 5000, 8000, 10000]
-    analyzer_full.plot_single_distribution_stacked(analyzer_full.relative_training_data["string_match_cooccur"], checkpoints, label="string_match_cooccur")
-    analyzer_full.plot_single_distribution_stacked(analyzer_full.relative_model_data, checkpoints, label="relative_model_data")
 
 ####################################################################################################################################################################################
 
@@ -530,8 +541,8 @@ def plot_distribution():
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
 
-    # run_model_training_plots()
+    # run_model_training_plots()  # this plots 2 distributions side by side
+    # plot_distribution()
     # run_spearman()
     # run_ce_loss()
     run_training_dynamics()
-    plot_distribution()
