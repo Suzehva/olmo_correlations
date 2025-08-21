@@ -541,8 +541,8 @@ def run_training_dynamics():
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
 
-    # run_model_training_plots()  # this plots 2 distributions side by side
+    run_model_training_plots()  # this plots 2 distributions side by side
     # plot_distribution()
     # run_spearman()
     # run_ce_loss()
-    run_training_dynamics()
+    # run_training_dynamics()
