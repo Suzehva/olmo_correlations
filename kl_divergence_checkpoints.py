@@ -339,38 +339,45 @@ class SpearmanAnalyzer:
         input_dict: dict like self.relative_training_data[...] or self.relative_model_data
         checkpoint: int
         """
-        gold_cp_data = self.relative_human_gold[checkpoint]  # gold distribution for this cp
-        cp_data = input_dict[checkpoint]                     # predicted distribution for this cp
-
+        gold_cp_data = self.relative_human_gold[checkpoint]
+        cp_data = input_dict[checkpoint]
+        
+        # Get active tenses from TENSE_MAPPING
+        active_tenses = sorted(set(TENSE_MAPPING.values()))
+        
         probs = []
         gold = []
+        years_used = 0
+        years_skipped = 0
 
         for year in range(self.year_range[0], self.year_range[1] + 1):
             year_str = str(year)
 
             # Predicted distribution (normalize if necessary)
-            d = cp_data.get(year_str, {"past": 0, "present": 0, "future": 0})
-            s = sum(d.values())
+            d = cp_data.get(year_str, {tense: 0 for tense in active_tenses})
+            s = sum(d.get(tense, 0) for tense in active_tenses)
             if s == 0:
-                pred_dist = [1.0, 0.0, 0.0]  # fallback if no data
+                years_skipped += 1
+                continue  # Skip this year if no data
             else:
-                pred_dist = [d.get("past", 0)/s, d.get("present", 0)/s, d.get("future", 0)/s]
-            probs.append(pred_dist)
-
+                pred_dist = [d.get(tense, 0)/s for tense in active_tenses]
+            
             # Gold distribution (already normalized)
-            g = gold_cp_data.get(year_str, {"past": 0, "present": 0, "future": 0})
-            gold_dist = [g["past"], g["present"], g["future"]]
+            g = gold_cp_data.get(year_str, {tense: 0 for tense in active_tenses})
+            gold_dist = [g.get(tense, 0) for tense in active_tenses]
+            
+            probs.append(pred_dist)
             gold.append(gold_dist)
-
-        # Convert to tensors
+            years_used += 1
+        
+        # Convert to tensors and compute loss
         probs_tensor = torch.tensor(probs, dtype=torch.float32)
         gold_tensor = torch.tensor(gold, dtype=torch.float32)
-
-        # CE loss (gold is full distribution, so use log-softmax + NLL trick)
+        
         log_probs = torch.log(probs_tensor + 1e-12)
         loss = -(gold_tensor * log_probs).sum(dim=1).mean()
 
-        print(f"{label} | Checkpoint {checkpoint} | CE Loss: {loss:.4f}")
+        print(f"{label} | Checkpoint {checkpoint} | CE Loss: {loss:.4f} | Years used: {years_used} | Years skipped: {years_skipped}")
         return loss.item()
 
 
@@ -541,8 +548,8 @@ def run_training_dynamics():
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
 
-    run_model_training_plots()  # this plots 2 distributions side by side
+    # run_model_training_plots()  # this plots 2 distributions side by side
     # plot_distribution()
     # run_spearman()
-    # run_ce_loss()
+    run_ce_loss()
     # run_training_dynamics()
