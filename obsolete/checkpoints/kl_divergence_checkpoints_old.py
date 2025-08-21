@@ -247,8 +247,6 @@ class SpearmanAnalyzer:
         plt.close()
 
 
-
-
     def plot_training_vs_model_stacked(self, count_type, checkpoints, output_dir="checkpoints"):
         print("plotting stacked training vs model distributions")
         Path(output_dir).mkdir(parents=True, exist_ok=True)

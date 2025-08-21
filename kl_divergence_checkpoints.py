@@ -3,7 +3,10 @@ import json
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
+import torch
 from scipy.stats import spearmanr
+import torch.nn.functional as F
+
 
 MODEL_PREDICTIONS_FILE = "../olmo_predictions/output_checkpoints/checkpoint_{cp}.json"
 
@@ -19,8 +22,8 @@ COUNT_TYPE_TO_FILE = {
 TENSE_MAPPING = {
     "was": "past",
     "were": "past",
-    "is": "present",
-    "are": "present",
+    # "is": "present",
+    # "are": "present",
     "will": "future",
 }
 
@@ -283,16 +286,113 @@ class SpearmanAnalyzer:
 
         # Path(f"{output_dir}/{label}").mkdir(parents=True, exist_ok=True)
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/spearman_{tense}_ckpt{checkpoint}_window{window}_{label}.png", dpi=300)
+        plt.savefig(f"{output_dir}/spearman_{tense}_years_{self.year_range[0]}_{self.year_range[1]}_ckpt{checkpoint}_window{window}_{label}.png", dpi=300)
         plt.close()
 
 
+    def compute_ce_loss_single(self, input_dict, checkpoint, label="training"):
+        """
+        Compute cross-entropy loss between predicted distribution (input_dict) 
+        and human gold distribution (self.relative_human_gold).
+        input_dict: dict like self.relative_training_data[...] or self.relative_model_data
+        checkpoint: int
+        """
+        gold_cp_data = self.relative_human_gold[checkpoint]  # gold distribution for this cp
+        cp_data = input_dict[checkpoint]                     # predicted distribution for this cp
 
-# PLOTTING FUNCTIONS
+        probs = []
+        gold = []
+
+        for year in range(self.year_range[0], self.year_range[1] + 1):
+            year_str = str(year)
+
+            # Predicted distribution (normalize if necessary)
+            d = cp_data.get(year_str, {"past": 0, "present": 0, "future": 0})
+            s = sum(d.values())
+            if s == 0:
+                pred_dist = [1.0, 0.0, 0.0]  # fallback if no data
+            else:
+                pred_dist = [d.get("past", 0)/s, d.get("present", 0)/s, d.get("future", 0)/s]
+            probs.append(pred_dist)
+
+            # Gold distribution (already normalized)
+            g = gold_cp_data.get(year_str, {"past": 0, "present": 0, "future": 0})
+            gold_dist = [g["past"], g["present"], g["future"]]
+            gold.append(gold_dist)
+
+        # Convert to tensors
+        probs_tensor = torch.tensor(probs, dtype=torch.float32)
+        gold_tensor = torch.tensor(gold, dtype=torch.float32)
+
+        # CE loss (gold is full distribution, so use log-softmax + NLL trick)
+        log_probs = torch.log(probs_tensor + 1e-12)
+        loss = -(gold_tensor * log_probs).sum(dim=1).mean()
+
+        print(f"{label} | Checkpoint {checkpoint} | CE Loss: {loss:.4f}")
+        return loss.item()
+
+
+    def compute_spearman_window(self, dict1, dict2, checkpoint, start_year, window_size):
+        """
+        Compute Spearman correlation between two distributions over a sliding window.
+        """
+
+        years = [str(y) for y in range(start_year, start_year + window_size)]
+        d1_vals, d2_vals = [], []
+
+        for y in years:
+            d1 = dict1[checkpoint].get(y, {"past": 0, "future": 0})
+            d2 = dict2[checkpoint].get(y, {"past": 0, "future": 0})
+            d1_vals.append([d1["past"], d1["future"]])
+            d2_vals.append([d2["past"], d2["future"]])
+
+        # flatten: (past + future) across window
+        d1_flat = [v for pair in d1_vals for v in pair]
+        d2_flat = [v for pair in d2_vals for v in pair]
+
+        rho, _ = spearmanr(d1_flat, d2_flat)
+        return rho if rho == rho else 0.0
+
+
+    def plot_spearman_over_checkpoints(
+        self, dict1, dict2, window_size, start_years,
+        label1="data 1", label2="dicdata 2t2", output_dir="spearman_cp"
+    ):
+        """
+        Plot Spearman rank correlation over checkpoints for different start years (sliding windows).
+        Optionally save to file if save_path is given.
+        """
+
+        checkpoints = sorted(dict1.keys())
+        colors = plt.cm.tab10(np.linspace(0, 1, len(start_years)))
+
+        plt.figure(figsize=(12, 6))
+
+        for color, start_year in zip(colors, start_years):
+            spearmans = []
+            for cp in checkpoints:
+                rho = self.compute_spearman_window(dict1, dict2, cp, start_year, window_size)
+                spearmans.append(rho)
+            plt.plot(checkpoints, spearmans, marker="o", color=color, label=f"{start_year} - {start_year+window_size}")
+
+        plt.xlabel("Checkpoint")
+        plt.ylabel("Spearman correlation")
+        plt.title(f"Spearman correlation over checkpoints ({label1} vs {label2})")
+        plt.legend()
+        plt.ylim(-1, 1)  # fix y-axis from -1 to 1
+
+        os.makedirs(f"{output_dir}", exist_ok=True)
+        save_path = f"{output_dir}/comparing_{label1}_{label2}_window_{window_size}_years_{self.year_range[0]}_{self.year_range[1]}.png"
+        plt.savefig(save_path, dpi=300)
+        plt.close()
+
+
+#########################################################################################
+# EXPERIMENTAL FUNCTIONS. Each one of these runs a specific experiment.
+#########################################################################################
 
 def run_model_training_plots():
-    YEAR_RANGE = (1950, 2200)
-    analyzer = SpearmanAnalyzer(year_range=YEAR_RANGE)
+    analyzer = SpearmanAnalyzer(year_range=(1950, 2050))
 
     checkpoints_to_plot = [2000, 5000, 8000, 10000]
     analyzer.plot_training_vs_model_stacked(analyzer.relative_training_data['exact_str_matching_avg'], checkpoints_to_plot, label="exact_str_matching_avg")
@@ -303,45 +403,86 @@ def run_model_training_plots():
 
 def run_spearman():
 
-    YEAR_RANGE = (1950, 2050)
-    smanalyzer = SpearmanAnalyzer(year_range=YEAR_RANGE)
-    smanalyzer.plot_spearman_sliding_window(
-        training_dict=smanalyzer.relative_human_gold,
-        tense="past",
-        checkpoint=10000,
-        window=20,
-        label="relative_human_gold"
-    )
+    smanalyzer = SpearmanAnalyzer(year_range=(1950, 2050))
 
     smanalyzer.plot_spearman_sliding_window(
         training_dict=smanalyzer.relative_training_data["string_match_cooccur"],
-        tense="past",
+        tense="future",
         checkpoint=10000,
         window=20,
         label="string_match_cooccur"
     )
 
     smanalyzer.plot_spearman_sliding_window(
-        training_dict=smanalyzer.relative_training_data["exact_str_matching"],
-        tense="past",
+        training_dict=smanalyzer.relative_training_data["string_match_cooccur"],
+        tense="future",
         checkpoint=10000,
-        window=20,
-        label="exact_str_matching"
+        window=50,
+        label="string_match_cooccur"
     )
 
-    smanalyzer.plot_spearman_sliding_window(
-        training_dict=smanalyzer.relative_training_data["exact_str_matching_avg"],
-        tense="past",
-        checkpoint=10000,
-        window=20,
-        label="exact_str_matching_avg"
+def run_ce_loss():
+
+    analyser = SpearmanAnalyzer(year_range=(1950, 2050))
+
+
+    print("Training snapshot, string cooccur:", list(analyser.relative_training_data["string_match_cooccur"][10000].items())[:5])
+    analyser.compute_ce_loss_single(analyser.relative_training_data["string_match_cooccur"], checkpoint=10000, label="training string_match_cooccur")
+
+    print("Training snapshot, string match:", list(analyser.relative_training_data["exact_str_matching"][10000].items())[:5])
+    analyser.compute_ce_loss_single(analyser.relative_training_data["exact_str_matching"], checkpoint=10000, label="training exact_str_matching")
+
+    print("Model snapshot:", list(analyser.relative_model_data[10000].items())[:5])
+    analyser.compute_ce_loss_single(analyser.relative_model_data, checkpoint=10000, label="model")
+
+    # example results for 1800-2200:
+    # Training snapshot: [('1800', {'past': 0.9709270433351618, 'future': 0.029072956664838178}), ('1801', {'past': 0.9863782051282052, 'future': 0.013621794871794872}), ('1802', {'past': 0.9871858058156727, 'future': 0.012814194184327254}), ('1803', {'past': 0.9840881272949816, 'future': 0.01591187270501836}), ('1804', {'past': 0.9807534807534808, 'future': 0.019246519246519246})]
+    # training string_match_cooccur | Checkpoint 10000 | CE Loss: 1.9600
+    # Model snapshot: [('1800', {'past': 0.9996292106130621, 'future': 0.0003707893869378904}), ('1801', {'past': 0.998573632179892, 'future': 0.0014263678201079208}), ('1802', {'past': 0.9988521106383594, 'future': 0.0011478893616405149}), ('1803', {'past': 0.9984965393050429, 'future': 0.0015034606949570943}), ('1804', {'past': 0.9987147562745495, 'future': 0.0012852437254504427})]
+    # model | Checkpoint 10000 | CE Loss: 1.0092
+
+
+def run_training_dynamics():
+
+    # be careful to specify start years within the year range the plotting just errors out and gives 0's instead if you dont.
+    analyser = SpearmanAnalyzer(year_range=(1950, 2050))
+
+    analyser.plot_spearman_over_checkpoints(
+        analyser.relative_model_data,
+        analyser.relative_human_gold,
+        window_size=20,
+        start_years=[1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020, 2030],
+        label1="Model",
+        label2="relative_human_gold"
     )
 
+    analyser.plot_spearman_over_checkpoints(
+        analyser.relative_model_data,
+        analyser.relative_training_data["string_match_cooccur"],
+        window_size=20,
+        start_years=[1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020, 2030],
+        label1="Model",
+        label2="string_match_cooccur"
+    )  
+
+    analyser.plot_spearman_over_checkpoints(
+        analyser.relative_model_data,
+        analyser.relative_training_data["string_match_cooccur"],
+        window_size=20,
+        start_years=[1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020, 2030],
+        label1="Model",
+        label2="string_match_cooccur"
+    )
+
+
+####################################################################################################################################################################################
 
 
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
 
-    run_model_training_plots()
-    run_spearman()
+    # run_model_training_plots()
+    # run_spearman()
+    # run_ce_loss()
+    run_training_dynamics()
 
