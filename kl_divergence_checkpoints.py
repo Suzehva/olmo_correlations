@@ -241,6 +241,44 @@ class SpearmanAnalyzer:
             plt.close()
 
 
+    def plot_single_distribution_stacked(self, dist_dict, checkpoints, output_dir="single_dist", label="distribution"):
+        """
+        Plot stacked bars for a single distribution dict over specified checkpoints.
+        """
+        print(f"plotting single distribution: {label}")
+        
+        Path(f"{output_dir}/{label}").mkdir(parents=True, exist_ok=True)
+
+        tenses_to_plot = [t for t in self.TENSE_ORDER if t in set(TENSE_MAPPING.values())]
+
+        for ckpt in checkpoints:
+            if ckpt not in dist_dict:
+                print(f"No data for checkpoint {ckpt}")
+                continue
+
+            cp_data = dist_dict[ckpt]
+            years = sorted(cp_data.keys())
+            ind = np.arange(len(years))
+
+            fig, ax = plt.subplots(figsize=(12, 6))
+            bottom = np.zeros(len(years))
+
+            for tense in tenses_to_plot:
+                vals = np.array([cp_data[y].get(tense, 0) for y in years])
+                ax.bar(ind, vals, bottom=bottom, label=tense, color=self.TENSE_COLORS[tense])
+                bottom += vals
+
+            ax.set_title(f"{label} | Checkpoint {ckpt}")
+            ax.set_xticks(ind[::max(1, len(ind)//20)])
+            ax.set_xticklabels(years[::max(1, len(ind)//20)], rotation=45)
+            ax.set_ylabel("Probability")
+            ax.legend()
+
+            save_path = f"{output_dir}/{label}/{self.year_range[0]}_{self.year_range{1}}/stacked_year_distribution_ckpt{ckpt}.png"
+            plt.tight_layout()
+            plt.savefig(save_path, dpi=300)
+            plt.close()
+
 
     def plot_spearman_sliding_window(self, training_dict, tense, checkpoint, window=20, output_dir="spearman", label="exact_str_matching"):
         """
@@ -466,14 +504,25 @@ def run_training_dynamics():
     )  
 
     analyser.plot_spearman_over_checkpoints(
-        analyser.relative_model_data,
-        analyser.relative_training_data["string_match_cooccur"],
+        analyser.relative_human_gold,
+        analyser.relative_training_data["exact_str_matching_avg"],
         window_size=20,
         start_years=[1950, 1960, 1970, 1980, 1990, 2000, 2010, 2020, 2030],
         label1="Model",
-        label2="string_match_cooccur"
+        label2="exact_str_matching_avg"
     )
 
+def plot_distribution():
+
+    analyzer = SpearmanAnalyzer(year_range=(1950, 2050))
+    checkpoints = [2000, 5000, 8000, 10000]
+    analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="string_match_cooccur")
+    analyzer.plot_single_distribution_stacked(analyzer.relative_model_data, checkpoints, label="relative_model_data")
+
+    analyzer_full= SpearmanAnalyzer(year_range=(1600, 2200))
+    checkpoints = [2000, 5000, 8000, 10000]
+    analyzer_full.plot_single_distribution_stacked(analyzer_full.relative_training_data["string_match_cooccur"], checkpoints, label="string_match_cooccur")
+    analyzer_full.plot_single_distribution_stacked(analyzer_full.relative_model_data, checkpoints, label="relative_model_data")
 
 ####################################################################################################################################################################################
 
@@ -485,4 +534,4 @@ if __name__ == "__main__":
     # run_spearman()
     # run_ce_loss()
     run_training_dynamics()
-
+    plot_distribution()
