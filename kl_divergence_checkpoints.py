@@ -93,7 +93,8 @@ class AnalyzerClass:
                 year_int = int(year)
                 if not (self.year_range[0] <= year_int <= self.year_range[1]):
                     continue
-                year_counts = {w: counts.get(w, 0) for w in TENSE_MAPPING if w in counts}
+                word_counts = {w: counts.get(w, 0) for w in TENSE_MAPPING if w in counts}
+                year_counts = self._counts_to_tense_counts(word_counts)
                 year_to_counts[year] = year_counts
                 if (cp == 10000):
                     total_count += sum(year_counts.values())  # add to running total
@@ -103,17 +104,20 @@ class AnalyzerClass:
         self.absolute_training_data[count_type] = results
         print(f"[{count_type}] Total co-occurrences loaded: {total_count}")
 
-
-
-    def _counts_to_probs(self, counts):
+    def _counts_to_tense_counts(self, counts):
+        """Convert word counts to tense category counts (absolute counts, not probabilities)"""
         totals = {}
         for w, cat in TENSE_MAPPING.items():
             totals.setdefault(cat, 0)
             totals[cat] += counts.get(w, 0)
-        grand_total = sum(totals.values())
+        return totals
+
+    def _tense_counts_to_probs(self, tense_counts):
+        """Convert tense category counts to probabilities"""
+        grand_total = sum(tense_counts.values())
         if grand_total == 0:
             return {cat: 0 for cat in set(TENSE_MAPPING.values())}
-        return {cat: val / grand_total for cat, val in totals.items()}
+        return {cat: val / grand_total for cat, val in tense_counts.items()}
 
     def load_relative_training_data(self, count_type):
         if count_type not in self.absolute_training_data:
@@ -124,7 +128,7 @@ class AnalyzerClass:
         for cp, year_dict in abs_data.items():
             year_to_probs = {}
             for year, counts in year_dict.items():
-                year_to_probs[year] = self._counts_to_probs(counts)
+                year_to_probs[year] = self._tense_counts_to_probs(counts)
             results[cp] = year_to_probs
 
         self.relative_training_data[count_type] = results
@@ -184,7 +188,7 @@ class AnalyzerClass:
         for cp, year_dict in self.model_data.items():
             year_to_rel = {}
             for year, counts in year_dict.items():
-                year_to_rel[year] = self._counts_to_probs(counts)
+                year_to_rel[year] = self._tense_counts_to_probs(counts)
             results[cp] = year_to_rel
         self.relative_model_data = results
 
@@ -593,11 +597,12 @@ class AnalyzerClass:
 
 def plot_distribution():
 
-    analyzer1 = AnalyzerClass(year_range=(1950, 2050))
+    analyzer1 = AnalyzerClass(year_range=(1000, 3000))
     checkpoints = [10000]
     # analyzer1.plot_single_distribution_stacked(analyzer1.relative_model_data, checkpoints, label="Model predictions") # plot_width=30)
-    analyzer1.plot_single_distribution_stacked(analyzer1.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence")
-    # analyzer1.plot_single_distribution_stacked(analyzer1.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence", plot_width=30)
+    # analyzer1.plot_single_distribution_stacked(analyzer1.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence")
+    analyzer1.plot_single_distribution_stacked(analyzer1.absolute_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence (absolute)")
+    analyzer1.plot_single_distribution_stacked(analyzer1.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence", plot_width=30)
 
 def run_spearman_over_years():
 
@@ -702,10 +707,10 @@ def run_training_dynamic_output():
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
 
-    # plot_distribution()
+    plot_distribution()
     # run_training_dynamic_output()    # this just plots the model output over cps in a big grid
 
-    run_training_dynamics_ce()
+    # run_training_dynamics_ce()
     # run_training_dynamics_spearman()
 
     # run_ce_loss_over_years()
