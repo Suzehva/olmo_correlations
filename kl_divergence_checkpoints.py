@@ -595,8 +595,9 @@ def plot_distribution():
 
     analyzer1 = AnalyzerClass(year_range=(1950, 2050))
     checkpoints = [10000]
-    analyzer1.plot_single_distribution_stacked(analyzer1.relative_model_data, checkpoints, label="Model predictions") # plot_width=30)
+    # analyzer1.plot_single_distribution_stacked(analyzer1.relative_model_data, checkpoints, label="Model predictions") # plot_width=30)
     analyzer1.plot_single_distribution_stacked(analyzer1.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence")
+    # analyzer1.plot_single_distribution_stacked(analyzer1.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence", plot_width=30)
 
 def run_spearman_over_years():
 
@@ -664,46 +665,28 @@ def run_training_dynamics_spearman():
     )  
 
 def run_training_dynamics_ce():
-    year_range=(1950, 2050)
+    year_range=(2100, 2200)
     analyser = AnalyzerClass(year_range=year_range)
 
     # CROSS ENTROPY
     # data1 is my "TRUE" distr, the gold. and data2 is the "MEASURED distr like model or training data.
-    # analyser.plot_avg_ce_over_checkpoints(
-    #     analyser.relative_human_gold,
-    #     analyser.relative_model_data,
-    #     window_size=20,
-    #     start_years=range(year_range[0], year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
-    #     label2="Gold distribution",
-    #     label1="Model predictions"
-    # )  
-
-    # analyser.plot_avg_ce_over_checkpoints(
-    #     analyser.relative_human_gold,
-    #     analyser.relative_training_data["string_match_cooccur"],
-    #     window_size=20,
-    #     start_years=range(year_range[0], year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
-    #     label1="Gold distribution",
-    #     label2="\'In [year]\' and [tense] cooccurence",
-    # )  
-
     analyser.plot_avg_ce_over_checkpoints(
         analyser.relative_human_gold,
         analyser.relative_model_data,
-        window_size=20,
-        start_years=range(year_range[0], year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
+        window_size=5,
+        start_years=range(year_range[0], year_range[1], 5), # every 20 yr increment in range, leaving 20 at the end for the window
         label1="Gold distribution",
         label2="Model prediction",
     )  
 
-    analyser.plot_avg_ce_over_checkpoints(
-        analyser.relative_human_gold,
-        analyser.relative_training_data["string_match_cooccur"],
-        window_size=20,
-        start_years=range(year_range[0], year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
-        label1="Gold distribution",
-        label2="\'In [year]\' and [tense] cooccurence",
-    )  
+    # analyser.plot_avg_ce_over_checkpoints(
+    #     analyser.relative_human_gold,
+    #     analyser.relative_training_data["string_match_cooccur"],
+    #     window_size=5,
+    #     start_years=range(year_range[0], year_range[1], 5), # every 20 yr increment in range, leaving 20 at the end for the window
+    #     label1="Gold distribution",
+    #     label2="\'In [year]\' and [tense] cooccurence",
+    # )  
 
 def run_training_dynamic_output():
     year_range=(1950, 2050)
@@ -722,10 +705,10 @@ if __name__ == "__main__":
     # plot_distribution()
     # run_training_dynamic_output()    # this just plots the model output over cps in a big grid
 
-    # run_training_dynamics_ce()
-    run_training_dynamics_spearman()
+    run_training_dynamics_ce()
+    # run_training_dynamics_spearman()
 
     # run_ce_loss_over_years()
     # run_spearman_over_years()
 
-    run_ce_loss()
+    # run_ce_loss()
