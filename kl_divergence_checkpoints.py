@@ -531,63 +531,76 @@ class AnalyzerClass:
         plt.close()
 
 
-
-    def plot_ce_between_distributions(self, dist_a, dist_b, checkpoint, output_dir="ce_plots", label="comparison"):
+    def plot_ce_vs_gold(self, dist_a, dist_b, gold_dist, checkpoint, output_dir="ce_plots", labels=("A vs Gold", "B vs Gold")):
         """
-        Plot cross-entropy loss per year between two distributions for a given checkpoint.
+        Plot CE loss per year for dist_a and dist_b against a gold distribution on the same plot.
 
-        dist_a, dist_b: dict like self.relative_training_data[...] or self.relative_model_data
+        dist_a, dist_b, gold_dist: dict[checkpoint][year] -> {"past":..., "present":..., "future":...}
         checkpoint: int
+        labels: tuple of labels for the legend
         """
-        cp_data_a = dist_a[checkpoint]
-        cp_data_b = dist_b[checkpoint]
-
         years = range(self.year_range[0], self.year_range[1] + 1)
-        ce_per_year = []
+        ce_a = []
+        ce_b = []
 
         for year in years:
             year_str = str(year)
 
-            # Distribution A (normalize if necessary)
-            d_a = cp_data_a.get(year_str, {"past": 0, "present": 0, "future": 0})
+            # Gold distribution (normalize)
+            d_gold = gold_dist[checkpoint].get(year_str, {"past":0, "present":0, "future":0})
+            s_gold = sum(d_gold.values())
+            if s_gold == 0:
+                gold_tensor = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
+            else:
+                gold_tensor = torch.tensor([
+                    d_gold.get("past", 0)/s_gold,
+                    d_gold.get("present", 0)/s_gold,
+                    d_gold.get("future", 0)/s_gold
+                ], dtype=torch.float32)
+
+            # Distribution A (normalize)
+            d_a = dist_a[checkpoint].get(year_str, {"past":0, "present":0, "future":0})
             s_a = sum(d_a.values())
             if s_a == 0:
-                dist_a_tensor = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
+                a_tensor = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
             else:
-                dist_a_tensor = torch.tensor([
+                a_tensor = torch.tensor([
                     d_a.get("past", 0)/s_a,
                     d_a.get("present", 0)/s_a,
                     d_a.get("future", 0)/s_a
                 ], dtype=torch.float32)
 
-            # Distribution B (normalize if necessary)
-            d_b = cp_data_b.get(year_str, {"past": 0, "present": 0, "future": 0})
+            # Distribution B (normalize)
+            d_b = dist_b[checkpoint].get(year_str, {"past":0, "present":0, "future":0})
             s_b = sum(d_b.values())
             if s_b == 0:
-                dist_b_tensor = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
+                b_tensor = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
             else:
-                dist_b_tensor = torch.tensor([
+                b_tensor = torch.tensor([
                     d_b.get("past", 0)/s_b,
                     d_b.get("present", 0)/s_b,
                     d_b.get("future", 0)/s_b
                 ], dtype=torch.float32)
 
-            # Cross-entropy for this year (treat dist_b as "target")
-            ce_loss = -(dist_b_tensor * torch.log(dist_a_tensor + 1e-12)).sum().item()
-            ce_per_year.append(ce_loss)
+            # CE (gold as target)
+            ce_a.append(-(gold_tensor * torch.log(a_tensor + 1e-12)).sum().item())
+            ce_b.append(-(gold_tensor * torch.log(b_tensor + 1e-12)).sum().item())
 
-        # Plot CE loss over years
-        plt.figure(figsize=(12, 5))
-        plt.plot(list(years), ce_per_year, marker='o', color="darkred")
+        # Plot
+        plt.figure(figsize=(12,5))
+        plt.plot(list(years), ce_a, marker='o', color="orange", label=labels[0])
+        plt.plot(list(years), ce_b, marker='o', color="blue", label=labels[1])
         plt.xlabel("Year")
-        plt.ylabel("Cross-Entropy Loss")
-        plt.title(f"Cross-Entropy Loss per Year | Checkpoint {checkpoint} | {label}")
+        plt.ylabel("Cross-Entropy Loss against Gold Distribution")
+        plt.title(f"Cross-Entropy Loss per Year | Checkpoint {checkpoint}")
+        plt.legend()
         plt.grid(True)
 
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/ce_per_year_ckpt{checkpoint}_{label}.png", dpi=300)
+        plt.savefig(f"{output_dir}/ce_per_year_ckpt{checkpoint}.png", dpi=300)
         plt.close()
+
 
 
 
@@ -638,11 +651,10 @@ def run_ce_loss():
 def run_ce_loss_over_years():
         
     analyser = AnalyzerClass(year_range=(1950, 2050))
-    # the target distribution MUST be the first distribution arg
-    # analyser.plot_ce_between_distributions(analyser.relative_human_gold, analyser.relative_model_data, 10000, output_dir="ce_plots", label="Gold distribution vs. Model predictions")
-    # analyser.plot_ce_between_distributions(analyser.relative_human_gold, analyser.relative_training_data["string_match_cooccur"], 10000, output_dir="ce_plots", label="Gold distribution vs. \'In [year]\' and [tense] cooccurence")
-    analyser.plot_ce_between_distributions(analyser.relative_training_data["string_match_cooccur"], analyser.relative_model_data, 10000, output_dir="ce_plots", label="Model predictions vs. \'In [year]\' and [tense] cooccurence")
+    # the ground truth distribution MUST be the third distribution arg
     
+    analyser.plot_ce_vs_gold(analyser.relative_model_data, analyser.relative_training_data["string_match_cooccur"], analyser.relative_human_gold, 10000, labels=("Model predictions", "\'In [year]\' and [tense] cooccurence\'"))
+
 
 def run_training_dynamics_spearman():
 
@@ -675,6 +687,7 @@ def run_training_dynamics_ce():
 
     # CROSS ENTROPY
     # data1 is my "TRUE" distr, the gold. and data2 is the "MEASURED distr like model or training data.
+
     analyser.plot_avg_ce_over_checkpoints(
         analyser.relative_human_gold,
         analyser.relative_model_data,
@@ -684,21 +697,21 @@ def run_training_dynamics_ce():
         label2="Model prediction",
     )  
 
-    # analyser.plot_avg_ce_over_checkpoints(
-    #     analyser.relative_human_gold,
-    #     analyser.relative_training_data["string_match_cooccur"],
-    #     window_size=5,
-    #     start_years=range(year_range[0], year_range[1], 5), # every 20 yr increment in range, leaving 20 at the end for the window
-    #     label1="Gold distribution",
-    #     label2="\'In [year]\' and [tense] cooccurence",
-    # )  
+    analyser.plot_avg_ce_over_checkpoints(
+        analyser.relative_human_gold,
+        analyser.relative_training_data["string_match_cooccur"],
+        window_size=5,
+        start_years=range(year_range[0], year_range[1], 5), # every 20 yr increment in range, leaving 20 at the end for the window
+        label1="Gold distribution",
+        label2="\'In [year]\' and [tense] cooccurence",
+    )  
 
 def run_training_dynamic_output():
     year_range=(1950, 2050)
     analyser = AnalyzerClass(year_range=year_range)
 
     cps = [i for i in range(250, 10001, 250)]
-    # analyser.plot_stacked_grid_over_checkpoints(analyser.relative_model_data, cps, label="Model predictions")
+    analyser.plot_stacked_grid_over_checkpoints(analyser.relative_model_data, cps, label="Model predictions")
     analyser.plot_stacked_grid_over_checkpoints(analyser.relative_training_data["string_match_cooccur"], cps, label="\'In [year]\' and [tense] cooccurence")
 
 ####################################################################################################################################################################################
@@ -711,9 +724,10 @@ if __name__ == "__main__":
     # run_training_dynamic_output()    # this just plots the model output over cps in a big grid
 
     # run_training_dynamics_ce()
+    # run_training_dynamics_ce()
     # run_training_dynamics_spearman()
 
-    # run_ce_loss_over_years()
+    run_ce_loss_over_years()
     # run_spearman_over_years()
 
     # run_ce_loss()
