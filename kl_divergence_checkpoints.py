@@ -586,16 +586,10 @@ class AnalyzerClass:
 def plot_distribution():
 
 
-    analyzer1 = AnalyzerClass(year_range=(2100, 2200))
+    analyzer1 = AnalyzerClass(year_range=(1950, 2050))
     checkpoints = [10000]
-    analyzer1.plot_single_distribution_stacked(analyzer1.relative_model_data, checkpoints, label="Model predictions")
+    analyzer1.plot_single_distribution_stacked(analyzer1.relative_model_data, checkpoints, label="Model predictions") # plot_width=30)
     analyzer1.plot_single_distribution_stacked(analyzer1.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence")
-
-    # analyzer = AnalyzerClass(year_range=(1000, 3000))
-    # checkpoints = [10000]
-    # analyzer.plot_single_distribution_stacked(analyzer.relative_model_data, checkpoints, label="Model predictions",  plot_width=30)
-    # analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence",  plot_width=30)
-    # analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["exact_str_matching"], checkpoints, label="\'In [year] there\' string matching", plot_width=30)
 
 
 def run_spearman():
@@ -612,11 +606,10 @@ def run_spearman():
 
 def run_ce_loss():
 
-    analyser = AnalyzerClass(year_range=(1950, 2050))
-
+    analyser = AnalyzerClass(year_range=(1800, 1900))
 
     print("Training snapshot, string cooccur:", list(analyser.relative_training_data["string_match_cooccur"][10000].items())[:5])
-    analyser.compute_ce_loss_single(analyser.relative_training_data["string_match_cooccur"], checkpoint=10000, label="training string_match_cooccur")
+    analyser.compute_ce_loss_single(analyser.relative_training_data["string_match_cooccur"], checkpoint=10000, label="\'In [year]\' and [tense] cooccurence")
 
     print("Training snapshot, string match:", list(analyser.relative_training_data["exact_str_matching"][10000].items())[:5])
     analyser.compute_ce_loss_single(analyser.relative_training_data["exact_str_matching"], checkpoint=10000, label="training exact_str_matching")
@@ -630,13 +623,13 @@ def run_ce_loss():
     # Model snapshot: [('1800', {'past': 0.9996292106130621, 'future': 0.0003707893869378904}), ('1801', {'past': 0.998573632179892, 'future': 0.0014263678201079208}), ('1802', {'past': 0.9988521106383594, 'future': 0.0011478893616405149}), ('1803', {'past': 0.9984965393050429, 'future': 0.0015034606949570943}), ('1804', {'past': 0.9987147562745495, 'future': 0.0012852437254504427})]
     # model | Checkpoint 10000 | CE Loss: 1.0092
 
-
 def run_ce_loss_over_years():
         
     analyser = AnalyzerClass(year_range=(1950, 2050))
-    analyser.plot_ce_between_distributions(analyser.relative_model_data, analyser.relative_human_gold, 10000, output_dir="ce_plots", label="Model predictions vs. Gold distribution")
-    analyser.plot_ce_between_distributions(analyser.relative_model_data, analyser.relative_training_data["string_match_cooccur"], 10000, output_dir="ce_plots", label="Model predictions vs. \'In [year]\' and [tense] cooccurence")
-    analyser.plot_ce_between_distributions(analyser.relative_training_data["string_match_cooccur"], analyser.relative_human_gold, 10000, output_dir="ce_plots", label="\'In [year]\' and [tense] cooccurence vs. Gold distribution")
+    # the target disrtibution MUST be the first distributoin arg
+    analyser.plot_ce_between_distributions(analyser.relative_human_gold, analyser.relative_model_data, 10000, output_dir="ce_plots", label="Gold distribution vs. Model predictions")
+    analyser.plot_ce_between_distributions(analyser.relative_human_gold, analyser.relative_training_data["string_match_cooccur"], 10000, output_dir="ce_plots", label="Gold distribution vs. \'In [year]\' and [tense] cooccurence")
+    # analyser.plot_ce_between_distributions(analyser.relative_training_data["string_match_cooccur"], analyser.relative_model_data, 10000, output_dir="ce_plots", label="Model predictions vs. \'In [year]\' and [tense] cooccurence")
     
 
 def run_training_dynamics_spearman():
@@ -702,7 +695,8 @@ def run_training_dynamic_output():
     analyser = AnalyzerClass(year_range=year_range)
 
     cps = [i for i in range(250, 10001, 250)]
-    analyser.plot_stacked_grid_over_checkpoints(analyser.relative_model_data, cps, label="Model predictions")
+    # analyser.plot_stacked_grid_over_checkpoints(analyser.relative_model_data, cps, label="Model predictions")
+    analyser.plot_stacked_grid_over_checkpoints(analyser.relative_training_data["string_match_cooccur"], cps, label="\'In [year]\' and [tense] cooccurence")
 
 ####################################################################################################################################################################################
 
@@ -710,8 +704,8 @@ def run_training_dynamic_output():
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
 
-    plot_distribution()
-    # run_training_dynamic_output()    # this just plots the model output over cps in a big grid
+    # plot_distribution()
+    run_training_dynamic_output()    # this just plots the model output over cps in a big grid
 
     # run_training_dynamics_ce()
 
