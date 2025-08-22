@@ -28,7 +28,6 @@ TENSE_MAPPING = {
     "will": "future",
 }
 
-
 class AnalyzerClass:
     def __init__(self, checkpoint_dir=MODEL_PREDICTIONS_FILE,
                  data_source="in_year_there_word_counts",
@@ -594,14 +593,12 @@ class AnalyzerClass:
 
 def plot_distribution():
 
-
     analyzer1 = AnalyzerClass(year_range=(1950, 2050))
     checkpoints = [10000]
     analyzer1.plot_single_distribution_stacked(analyzer1.relative_model_data, checkpoints, label="Model predictions") # plot_width=30)
     analyzer1.plot_single_distribution_stacked(analyzer1.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence")
 
-
-def run_spearman():
+def run_spearman_over_years():
 
     smanalyzer = AnalyzerClass(year_range=(1940, 2060))
 
@@ -615,7 +612,7 @@ def run_spearman():
 
 def run_ce_loss():
 
-    analyser = AnalyzerClass(year_range=(1800, 1900))
+    analyser = AnalyzerClass(year_range=(1950, 2050))
 
     print("Training snapshot, string cooccur:", list(analyser.relative_training_data["string_match_cooccur"][10000].items())[:5])
     analyser.compute_ce_loss_single(analyser.relative_training_data["string_match_cooccur"], checkpoint=10000, label="\'In [year]\' and [tense] cooccurence")
@@ -635,10 +632,10 @@ def run_ce_loss():
 def run_ce_loss_over_years():
         
     analyser = AnalyzerClass(year_range=(1950, 2050))
-    # the target disrtibution MUST be the first distributoin arg
-    analyser.plot_ce_between_distributions(analyser.relative_human_gold, analyser.relative_model_data, 10000, output_dir="ce_plots", label="Gold distribution vs. Model predictions")
-    analyser.plot_ce_between_distributions(analyser.relative_human_gold, analyser.relative_training_data["string_match_cooccur"], 10000, output_dir="ce_plots", label="Gold distribution vs. \'In [year]\' and [tense] cooccurence")
-    # analyser.plot_ce_between_distributions(analyser.relative_training_data["string_match_cooccur"], analyser.relative_model_data, 10000, output_dir="ce_plots", label="Model predictions vs. \'In [year]\' and [tense] cooccurence")
+    # the target distribution MUST be the first distribution arg
+    # analyser.plot_ce_between_distributions(analyser.relative_human_gold, analyser.relative_model_data, 10000, output_dir="ce_plots", label="Gold distribution vs. Model predictions")
+    # analyser.plot_ce_between_distributions(analyser.relative_human_gold, analyser.relative_training_data["string_match_cooccur"], 10000, output_dir="ce_plots", label="Gold distribution vs. \'In [year]\' and [tense] cooccurence")
+    analyser.plot_ce_between_distributions(analyser.relative_training_data["string_match_cooccur"], analyser.relative_model_data, 10000, output_dir="ce_plots", label="Model predictions vs. \'In [year]\' and [tense] cooccurence")
     
 
 def run_training_dynamics_spearman():
@@ -648,23 +645,23 @@ def run_training_dynamics_spearman():
     analyser = AnalyzerClass(year_range=year_range)
 
     # RANK CORRELATION
-    # analyser.plot_spearman_over_checkpoints(
-    #     analyser.relative_model_data,
-    #     analyser.relative_human_gold,
-    #     window_size=20,
-    #     start_years=range(year_range[0]+10, year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
-    #     label1="Model predictions",
-    #     label2="Gold distribution"
-    # )  
+    analyser.plot_spearman_over_checkpoints(
+        analyser.relative_model_data,
+        analyser.relative_human_gold,
+        window_size=20,
+        start_years=range(year_range[0]+10, year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
+        label1="Model predictions",
+        label2="Gold distribution"
+    )  
 
-    # analyser.plot_spearman_over_checkpoints(
-    #     analyser.relative_model_data,
-    #     analyser.relative_training_data["string_match_cooccur"],
-    #     window_size=20,
-    #     start_years=range(year_range[0]+10, year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
-    #     label1="Model predictions",
-    #     label2="\'In [year]\' and [tense] cooccurence"
-    # )  
+    analyser.plot_spearman_over_checkpoints(
+        analyser.relative_model_data,
+        analyser.relative_training_data["string_match_cooccur"],
+        window_size=20,
+        start_years=range(year_range[0]+10, year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
+        label1="Model predictions",
+        label2="\'In [year]\' and [tense] cooccurence"
+    )  
 
 def run_training_dynamics_ce():
     year_range=(1950, 2050)
@@ -693,8 +690,8 @@ def run_training_dynamics_ce():
     analyser.plot_avg_ce_over_checkpoints(
         analyser.relative_human_gold,
         analyser.relative_model_data,
-        window_size=5,
-        start_years=range(year_range[0], year_range[1], 5), # every 20 yr increment in range, leaving 20 at the end for the window
+        window_size=20,
+        start_years=range(year_range[0], year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
         label1="Gold distribution",
         label2="Model prediction",
     )  
@@ -702,8 +699,8 @@ def run_training_dynamics_ce():
     analyser.plot_avg_ce_over_checkpoints(
         analyser.relative_human_gold,
         analyser.relative_training_data["string_match_cooccur"],
-        window_size=5,
-        start_years=range(year_range[0], year_range[1], 5), # every 20 yr increment in range, leaving 20 at the end for the window
+        window_size=20,
+        start_years=range(year_range[0], year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
         label1="Gold distribution",
         label2="\'In [year]\' and [tense] cooccurence",
     )  
@@ -725,9 +722,10 @@ if __name__ == "__main__":
     # plot_distribution()
     # run_training_dynamic_output()    # this just plots the model output over cps in a big grid
 
-    run_training_dynamics_ce()
+    # run_training_dynamics_ce()
+    run_training_dynamics_spearman()
 
     # run_ce_loss_over_years()
-    # run_spearman()
+    # run_spearman_over_years()
 
-    # run_ce_loss()
+    run_ce_loss()
