@@ -189,6 +189,62 @@ class AnalyzerClass:
         self.relative_model_data = results
 
 
+    def plot_training_vs_model_stacked(self, training_dict, checkpoints, output_dir="checkpoints", label="training"):
+        """
+        Plot stacked bars for a given training dict (e.g., self.relative_training_data['exact_str_matching_avg']
+        or self.relative_human_gold) against self.relative_model_data.
+        """
+        print("plotting stacked training vs model distributions")
+        
+        # Make folder using the label
+        Path(f"{output_dir}/{label}").mkdir(parents=True, exist_ok=True)
+
+        train_data = training_dict
+        model_data = self.relative_model_data
+
+        # Only include tenses that exist in TENSE_MAPPING
+        tenses_to_plot = [t for t in self.TENSE_ORDER if t in set(TENSE_MAPPING.values())]
+
+        for ckpt in checkpoints:
+            if ckpt not in model_data:
+                print(f"No model data for checkpoint {ckpt}")
+                continue
+
+            train_cp_data = train_data[ckpt]
+            model_cp_data = model_data[ckpt]
+            years = sorted(train_cp_data.keys())
+            ind = np.arange(len(years))
+
+            fig, axes = plt.subplots(1, 2, figsize=(16, 6), sharey=True)
+
+            # ---- Training Data ----
+            bottom = np.zeros(len(years))
+            for tense in tenses_to_plot:
+                vals = np.array([train_cp_data[y].get(tense, 0) for y in years])
+                axes[0].bar(ind, vals, bottom=bottom, label=tense, color=self.TENSE_COLORS[tense])
+                bottom += vals
+            axes[0].set_title(f"{label} Data")
+            axes[0].set_xticks(ind[::max(1, len(ind)//20)])
+            axes[0].set_xticklabels(years[::max(1, len(ind)//20)], rotation=45)
+            axes[0].set_ylabel("Probability")
+            axes[0].legend()
+
+            # ---- Model Data ----
+            bottom = np.zeros(len(years))
+            for tense in tenses_to_plot:
+                vals = np.array([model_cp_data[y].get(tense, 0) for y in years])
+                axes[1].bar(ind, vals, bottom=bottom, label=tense, color=self.TENSE_COLORS[tense])
+                bottom += vals
+            axes[1].set_title(f"Model Checkpoint {ckpt}")
+            axes[1].set_xticks(ind[::max(1, len(ind)//20)])
+            axes[1].set_xticklabels(years[::max(1, len(ind)//20)], rotation=45)
+
+            fig.suptitle(f"Year Distributions | Stacked Bars | Checkpoint {ckpt}")
+            plt.tight_layout()
+            plt.savefig(f"{output_dir}/{label}/stacked_year_distribution_ckpt{ckpt}.png", dpi=300)
+            plt.close()
+
+
     def plot_single_distribution_stacked(self, dist_dict, checkpoints, output_dir="single_dist", label="distribution", plot_width=12):
         """
         Plot stacked bars for a single distribution dict over specified checkpoints.
@@ -213,11 +269,7 @@ class AnalyzerClass:
 
             for tense in tenses_to_plot:
                 vals = np.array([cp_data[y].get(tense, 0) for y in years])
-                ax.bar(
-                    ind, vals, bottom=bottom,
-                    label=tense, color=self.TENSE_COLORS[tense],
-                    linewidth=0, edgecolor="none"  # no white lines
-                )
+                ax.bar(ind, vals, bottom=bottom, label=tense, color=self.TENSE_COLORS[tense])
                 bottom += vals
 
             ax.set_title(f"{label} | Checkpoint {ckpt}")
@@ -228,12 +280,10 @@ class AnalyzerClass:
 
             save_dir = Path(f"{output_dir}/{label}/{self.year_range[0]}_{self.year_range[1]}")
             save_dir.mkdir(parents=True, exist_ok=True)
-            save_path = save_dir / f"stacked_year_distribution_ckpt{ckpt}.png"
-            
+            save_path = f"{output_dir}/{label}/{self.year_range[0]}_{self.year_range[1]}/stacked_year_distribution_ckpt{ckpt}.png"
             plt.tight_layout()
-            plt.savefig(save_path, dpi=600)  # smoother, higher resolution
+            plt.savefig(save_path, dpi=300)
             plt.close()
-
 
     def plot_stacked_grid_over_checkpoints(
         self, dist_dict, checkpoints, output_dir="single_dist_grid",
@@ -583,19 +633,22 @@ class AnalyzerClass:
 # EXPERIMENTAL FUNCTIONS. Each one of these runs a specific experiment.
 #########################################################################################
 
+def run_model_training_plots():
+    analyzer = AnalyzerClass(year_range=(1950, 2050))
+
+    checkpoints_to_plot = [2000, 5000, 8000, 10000]
+    analyzer.plot_training_vs_model_stacked(analyzer.relative_training_data['exact_str_matching_avg'], checkpoints_to_plot, label="exact_str_matching_avg")
+    analyzer.plot_training_vs_model_stacked(analyzer.relative_training_data['exact_str_matching'], checkpoints_to_plot, label="exact_str_matching")
+    analyzer.plot_training_vs_model_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints_to_plot, label="string_match_cooccur")
+    analyzer.plot_training_vs_model_stacked(analyzer.relative_human_gold, checkpoints_to_plot, label="relative_human_gold")
+
 def plot_distribution():
 
-
-    analyzer1 = AnalyzerClass(year_range=(2100, 2200))
+    analyzer = AnalyzerClass(year_range=(1000, 3000))
     checkpoints = [10000]
-    analyzer1.plot_single_distribution_stacked(analyzer1.relative_model_data, checkpoints, label="Model predictions")
-    analyzer1.plot_single_distribution_stacked(analyzer1.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence")
-
-    # analyzer = AnalyzerClass(year_range=(1000, 3000))
-    # checkpoints = [10000]
-    # analyzer.plot_single_distribution_stacked(analyzer.relative_model_data, checkpoints, label="Model predictions",  plot_width=30)
-    # analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence",  plot_width=30)
-    # analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["exact_str_matching"], checkpoints, label="\'In [year] there\' string matching", plot_width=30)
+    # analyzer.plot_single_distribution_stacked(analyzer.relative_model_data, checkpoints, label="Model predictions")
+    # analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence")
+    analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["exact_str_matching"], checkpoints, label="\'In [year] there\' string matching")
 
 
 def run_spearman():
@@ -718,4 +771,8 @@ if __name__ == "__main__":
     # run_ce_loss_over_years()
     # run_spearman()
 
+
+
+# obsolete methods
+    # run_model_training_plots()  # this plots 2 distributions side by side
     # run_ce_loss()
