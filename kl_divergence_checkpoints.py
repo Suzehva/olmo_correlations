@@ -465,7 +465,7 @@ class AnalyzerClass:
         colors = cmap(np.linspace(0, 1, len(start_years)))[::-1]  # inverted order
 
 
-        plt.figure(figsize=(12, 6))
+        plt.figure(figsize=(14, 6))  # wider figure
 
         for color, start_year in zip(colors, start_years):
             avg_ces = []
@@ -509,17 +509,25 @@ class AnalyzerClass:
                 plt.plot(valid_cps, avg_ces, marker=marker_shape, color=color,
                         label=f"{start_year} - {start_year+window_size}", linestyle='-')
 
+
+        plt.legend(
+            bbox_to_anchor=(1.02, 1), 
+            loc="upper left", 
+            borderaxespad=0.
+        )
+
         plt.xlabel("Checkpoint")
         plt.ylabel("Average Cross-Entropy")
         plt.title(f"Average CE over checkpoints ({label1} vs {label2})")
-        plt.legend()
         plt.ylim(0, 30)
         plt.grid(True)
 
         os.makedirs(f"{output_dir}", exist_ok=True)
         save_path = f"{output_dir}/avg_ce_{label1}_{label2}_window_{window_size}_years_{self.year_range[0]}_{self.year_range[1]}.png"
-        plt.savefig(save_path, dpi=300)
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")  # ensures legend not cut off
         plt.close()
+
+
 
     def plot_ce_between_distributions(self, dist_a, dist_b, checkpoint, output_dir="ce_plots", label="comparison"):
         """
@@ -691,6 +699,15 @@ def run_training_dynamics_ce():
         label2="Model prediction",
     )  
 
+    analyser.plot_avg_ce_over_checkpoints(
+        analyser.relative_human_gold,
+        analyser.relative_training_data["string_match_cooccur"],
+        window_size=5,
+        start_years=range(year_range[0], year_range[1], 5), # every 20 yr increment in range, leaving 20 at the end for the window
+        label1="Gold distribution",
+        label2="\'In [year]\' and [tense] cooccurence",
+    )  
+
 def run_training_dynamic_output():
     year_range=(1950, 2050)
     analyser = AnalyzerClass(year_range=year_range)
@@ -706,9 +723,9 @@ if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
 
     # plot_distribution()
-    run_training_dynamic_output()    # this just plots the model output over cps in a big grid
+    # run_training_dynamic_output()    # this just plots the model output over cps in a big grid
 
-    # run_training_dynamics_ce()
+    run_training_dynamics_ce()
 
     # run_ce_loss_over_years()
     # run_spearman()
