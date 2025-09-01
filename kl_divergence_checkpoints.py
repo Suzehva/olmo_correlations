@@ -94,8 +94,7 @@ class AnalyzerClass:
                 year_int = int(year)
                 if not (self.year_range[0] <= year_int <= self.year_range[1]):
                     continue
-                word_counts = {w: counts.get(w, 0) for w in TENSE_MAPPING if w in counts}
-                year_counts = self._counts_to_tense_counts(word_counts)
+                year_counts = {w: counts.get(w, 0) for w in TENSE_MAPPING if w in counts}
                 year_to_counts[year] = year_counts
                 if (cp == 10000):
                     total_count += sum(year_counts.values())  # add to running total
@@ -105,20 +104,17 @@ class AnalyzerClass:
         self.absolute_training_data[count_type] = results
         print(f"[{count_type}] Total co-occurrences loaded: {total_count}")
 
-    def _counts_to_tense_counts(self, counts):
-        """Convert word counts to tense category counts (absolute counts, not probabilities)"""
+
+
+    def _counts_to_probs(self, counts):
         totals = {}
         for w, cat in TENSE_MAPPING.items():
             totals.setdefault(cat, 0)
             totals[cat] += counts.get(w, 0)
-        return totals
-
-    def _tense_counts_to_probs(self, tense_counts):
-        """Convert tense category counts to probabilities"""
-        grand_total = sum(tense_counts.values())
+        grand_total = sum(totals.values())
         if grand_total == 0:
             return {cat: 0 for cat in set(TENSE_MAPPING.values())}
-        return {cat: val / grand_total for cat, val in tense_counts.items()}
+        return {cat: val / grand_total for cat, val in totals.items()}
 
     def load_relative_training_data(self, count_type):
         if count_type not in self.absolute_training_data:
@@ -129,7 +125,7 @@ class AnalyzerClass:
         for cp, year_dict in abs_data.items():
             year_to_probs = {}
             for year, counts in year_dict.items():
-                year_to_probs[year] = self._tense_counts_to_probs(counts)
+                year_to_probs[year] = self._counts_to_probs(counts)
             results[cp] = year_to_probs
 
         self.relative_training_data[count_type] = results
@@ -189,7 +185,7 @@ class AnalyzerClass:
         for cp, year_dict in self.model_data.items():
             year_to_rel = {}
             for year, counts in year_dict.items():
-                year_to_rel[year] = self._tense_counts_to_probs(counts)
+                year_to_rel[year] = self._counts_to_probs(counts)
             results[cp] = year_to_rel
         self.relative_model_data = results
 
@@ -623,7 +619,7 @@ class AnalyzerClass:
         plt.close()
 
 
-    def plot_ce_vs_gold(self, dist_a, dist_b, gold_dist, checkpoint, output_dir="ce_plots_2", labels=("A vs Gold", "B vs Gold")):
+    def plot_ce_vs_gold(self, dist_a, dist_b, gold_dist, checkpoint, output_dir="ce_plots", labels=("A vs Gold", "B vs Gold")):
         """
         Plot CE loss per year for dist_a and dist_b against a gold distribution on the same plot.
 
@@ -682,23 +678,15 @@ class AnalyzerClass:
         plt.plot(valid_years, ce_b, marker='o', color="blue", label=labels[1])
         plt.xlabel("Year")
         plt.ylabel("Cross-Entropy Loss against Gold Distribution")
-
-        # Explicit title with labels
-        plt.title(f"Cross-Entropy Loss per Year | Checkpoint {checkpoint}\nComparing {labels[0]} vs {labels[1]}", fontsize=13)
-
+        plt.title(f"Cross-Entropy Loss per Year | Checkpoint {checkpoint}")
         plt.legend()
         plt.grid(True)
 
-        # Sanitize labels for filename
-        import re
-        label_a = re.sub(r"\W+", "_", labels[0])
-        label_b = re.sub(r"\W+", "_", labels[1])
-
         Path(output_dir).mkdir(parents=True, exist_ok=True)
-        filename = f"ce_per_year_ckpt{checkpoint}_{label_a}_vs_{label_b}.png"
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/{filename}", dpi=300)
+        plt.savefig(f"{output_dir}/ce_per_year_ckpt{checkpoint}_{labels[0]}_{labels[1]}.png", dpi=300)
         plt.close()
+
 
 
 #########################################################################################
@@ -707,7 +695,7 @@ class AnalyzerClass:
 
 def plot_distribution():
 
-    analyzer1 = AnalyzerClass(year_range=(1000, 3000))
+    analyzer1 = AnalyzerClass(year_range=(1950, 2050))
     checkpoints = [10000]
     analyzer1.plot_single_distribution_stacked(analyzer1.relative_model_data, checkpoints, label="Model predictions") # plot_width=30)
     analyzer1.plot_single_distribution_stacked(analyzer1.relative_human_gold, checkpoints, label="Gold distribution") #, plot_width=30)
@@ -730,12 +718,9 @@ def run_ce_loss():
 
     analyser = AnalyzerClass(year_range=(1950, 2050))
 
-    for cutoff_yr in [2022, 2023, 2024, 2025]:
+    for cutoff_yr in [2015, 2016, 2017, 2023, 2024, 2025]:
         print(f"cutoff_year = {cutoff_yr}")
         analyser.populate_gold_data(cutoff_yr)
-
-        # print("Model snapshot:", list(analyser.relative_model_data[10000].items())[:5])
-        analyser.compute_ce_loss_single(analyser.relative_model_data, checkpoint=10000, label=f"model, cutoff_year={cutoff_yr}")
 
         # print("Training snapshot, string cooccur:", list(analyser.relative_training_data["string_match_cooccur"][10000].items())[:5])
         analyser.compute_ce_loss_single(analyser.relative_training_data["string_match_cooccur"], checkpoint=10000, label=f"\'In [year]\' and [tense] cooccurence, cutoff_year={cutoff_yr}")
@@ -743,6 +728,9 @@ def run_ce_loss():
         # print("Training snapshot, string match:", list(analyser.relative_training_data["exact_str_matching"][10000].items())[:5])
         # analyser.compute_ce_loss_single(analyser.relative_training_data["exact_str_matching"], checkpoint=10000, label="training exact_str_matching")
 
+        # print("Model snapshot:", list(analyser.relative_model_data[10000].items())[:5])
+        analyser.compute_ce_loss_single(analyser.relative_model_data, checkpoint=10000, label=f"model, cutoff_year={cutoff_yr}")
+    
     # example results for 1800-2200:
     # Training snapshot: [('1800', {'past': 0.9709270433351618, 'future': 0.029072956664838178}), ('1801', {'past': 0.9863782051282052, 'future': 0.013621794871794872}), ('1802', {'past': 0.9871858058156727, 'future': 0.012814194184327254}), ('1803', {'past': 0.9840881272949816, 'future': 0.01591187270501836}), ('1804', {'past': 0.9807534807534808, 'future': 0.019246519246519246})]
     # training string_match_cooccur | Checkpoint 10000 | CE Loss: 1.9600
@@ -754,11 +742,13 @@ def run_ce_loss_over_years():
     analyser = AnalyzerClass(year_range=(1950, 2050))
     # the ground truth distribution MUST be the third distribution arg
     
-    for cutoff_yr in [2022, 2023, 2024, 2025]:
+    for cutoff_yr in [2015, 2016, 2017, 2023, 2024, 2025]:
         print(f"cutoff_year = {cutoff_yr}")
         analyser.populate_gold_data(cutoff_yr)
 
         analyser.plot_ce_vs_gold(analyser.relative_model_data, analyser.relative_training_data["string_match_cooccur"], analyser.relative_human_gold, 10000, labels=(f"Model predictions, cutoff_year={cutoff_yr}", f"\'In [year]\' and [tense] cooccurence\', cutoff_year={cutoff_yr}"))
+
+
 
 def run_training_dynamics_spearman():
 
@@ -842,10 +832,9 @@ if __name__ == "__main__":
     # run_training_dynamic_output()    # this just plots the model output over cps in a big grid
 
     # run_training_dynamics_ce()
-    # run_training_dynamics_ce()
     # run_training_dynamics_spearman()
 
     run_ce_loss_over_years()
     # run_spearman_over_years()
 
-    # run_ce_loss() # this is on command line; results
+    run_ce_loss() # this is on command line; results
