@@ -6,12 +6,13 @@ from pathlib import Path
 import torch
 from scipy.stats import spearmanr
 import torch.nn.functional as F
+from matplotlib.lines import Line2D
 
 
 MODEL_PREDICTIONS_FILE = "../olmo_predictions/output_checkpoints/checkpoint_{cp}.json"
 
 TRAINING_DATA_FILE_1 = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-{cp}/analytics/1000-3000__was.were.is.are.will__aggregated_results_steps0-{cp}.json"
-# TRAINING_DATA_FILE_2 = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-{cp}/extra_analytics/1000-3000__was.were.is.are.will__extra_aggregated_results_steps0-{cp}.json"
+# TRAINING_DATA_FILE_2 = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-{cp}/extra_analytics/1000-3000__was.were.is.are.will__extra_aggregated_results_steps0-{cp}.json"  # old
 TRAINING_DATA_FILE_2 = "../olmo_training_data/1000-3000__was.were.is.are.will__allenai_OLMo-2-0425-1B/aggregated/steps0-{cp}/extra_strict_analytics/1000-3000__was.were.is.are.will__extra_strict_aggregated_results_steps0-{cp}.json"
 
 COUNT_TYPE_TO_FILE = {
@@ -54,13 +55,13 @@ class AnalyzerClass:
     TENSE_COLORS = {"past": "orange", "present": "purple", "future": "green"}
 
 
-    def populate_gold_data(self):
+    def populate_gold_data(self, cutoff_past=2022):
         self.relative_human_gold = {}
 
         # Define the gold distribution per year
         gold_per_year = {}
         for year in range(self.year_range[0], self.year_range[1] + 1):
-            if year <= 2022:
+            if year <= cutoff_past:
                 gold_per_year[str(year)] = {"past": 1.0, "present": 0.0, "future": 0.0}
             else:
                 gold_per_year[str(year)] = {"past": 0.0, "present": 0.0, "future": 1.0}
@@ -452,49 +453,44 @@ class AnalyzerClass:
         plt.close()
 
 
-    def plot_avg_ce_over_checkpoints(self, dict1, dict2, window_size, start_years, label1="data 1", label2="data 2", output_dir="ce_cp"):
+    def plot_avg_ce_over_checkpoints(self, dict1, dict2, window_size, start_years, 
+                                    label1="data 1", label2="data 2", output_dir="ce_cp"):
         """
         Plot average cross-entropy over checkpoints for different start years (sliding windows).
-        Skip points where CE cannot be computed (e.g., all zeros in window).
-        Use different marker shapes for start years before/after 2022.
+        Only show first/last datalines in legend + marker shape meaning.
         """
         checkpoints = sorted(dict1.keys())
 
         cmap = plt.get_cmap("rainbow")
-        colors = cmap(np.linspace(0, 1, len(start_years)))[::-1]  # inverted order
+        colors = cmap(np.linspace(0, 1, len(start_years)))[::-1]
 
+        plt.figure(figsize=(14, 6))
 
-        plt.figure(figsize=(14, 6))  # wider figure
+        handles, labels = [], []  # collect for custom legend
 
-        for color, start_year in zip(colors, start_years):
-            avg_ces = []
-            valid_cps = []
+        for idx, (color, start_year) in enumerate(zip(colors, start_years)):
+            avg_ces, valid_cps = [], []
 
             for cp in checkpoints:
                 ce_values = []
-
                 for year in range(start_year, start_year + window_size):
                     year_str = str(year)
 
                     # Dist 1
                     d1 = dict1[cp].get(year_str, {"past":0,"present":0,"future":0})
                     s1 = sum(d1.values())
-                    if s1 == 0:
-                        dist1_tensor = torch.tensor([1.0,0.0,0.0], dtype=torch.float32)
-                    else:
-                        dist1_tensor = torch.tensor([d1.get("past",0)/s1,
-                                                    d1.get("present",0)/s1,
-                                                    d1.get("future",0)/s1], dtype=torch.float32)
+                    dist1_tensor = torch.tensor(
+                        [d1.get("past",0)/s1 if s1 else 1.0,
+                        d1.get("present",0)/s1 if s1 else 0.0,
+                        d1.get("future",0)/s1 if s1 else 0.0], dtype=torch.float32)
 
                     # Dist 2
                     d2 = dict2[cp].get(year_str, {"past":0,"present":0,"future":0})
                     s2 = sum(d2.values())
-                    if s2 == 0:
-                        dist2_tensor = torch.tensor([1.0,0.0,0.0], dtype=torch.float32)
-                    else:
-                        dist2_tensor = torch.tensor([d2.get("past",0)/s2,
-                                                    d2.get("present",0)/s2,
-                                                    d2.get("future",0)/s2], dtype=torch.float32)
+                    dist2_tensor = torch.tensor(
+                        [d2.get("past",0)/s2 if s2 else 1.0,
+                        d2.get("present",0)/s2 if s2 else 0.0,
+                        d2.get("future",0)/s2 if s2 else 0.0], dtype=torch.float32)
 
                     ce = -(dist2_tensor * torch.log(dist1_tensor + 1e-12)).sum().item()
                     ce_values.append(ce)
@@ -505,15 +501,28 @@ class AnalyzerClass:
 
             if avg_ces:
                 marker_shape = "s" if start_year >= 2022 else "o"
-                plt.plot(valid_cps, avg_ces, marker=marker_shape, color=color,
-                        label=f"{start_year} - {start_year+window_size}", linestyle='-')
+                line, = plt.plot(valid_cps, avg_ces, marker=marker_shape, 
+                                color=color, linestyle='-')
 
+                # Only add legend entry for first and last dataline
+                if idx == 0 or idx == len(start_years)-1:
+                    if window_size == 1:
+                        legend_label = f"{start_year}"
+                    else:
+                        legend_label = f"{start_year} - {start_year + window_size}"
+                    labels.append(legend_label)
+                    handles.append(line)
 
-        plt.legend(
-            bbox_to_anchor=(1.02, 1), 
-            loc="upper left", 
-            borderaxespad=0.
-        )
+        # Add marker-shape legend entries
+        custom_handles = [
+            Line2D([0], [0], color="k", marker="o", linestyle="", label="Past"),
+            Line2D([0], [0], color="k", marker="s", linestyle="", label="Future"),
+        ]
+        handles.extend(custom_handles)
+        labels.extend([h.get_label() for h in custom_handles])
+
+        plt.legend(handles, labels,
+                bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0.)
 
         plt.xlabel("Checkpoint")
         plt.ylabel("Average Cross-Entropy")
@@ -523,11 +532,94 @@ class AnalyzerClass:
 
         os.makedirs(f"{output_dir}", exist_ok=True)
         save_path = f"{output_dir}/avg_ce_{label1}_{label2}_window_{window_size}_years_{self.year_range[0]}_{self.year_range[1]}.png"
-        plt.savefig(save_path, dpi=300, bbox_inches="tight")  # ensures legend not cut off
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
+        plt.close()
+
+    def plot_avg_ce_past_future_checkpoints(self, dict1, dict2, window_size, start_years,
+                                            label1="data 1", label2="data 2", output_dir="ce_cp"):
+        """
+        Plot average cross-entropy over checkpoints for all start years collapsed into two lines:
+        one for 'past' (<2022) and one for 'future' (>=2022).
+        Legend includes year range and count.
+        """
+        checkpoints = sorted(dict1.keys())
+        groups = {"past": [], "future": []}
+
+        # separate years into past/future groups
+        for start_year in start_years:
+            if start_year >= 2022:
+                groups["future"].append(start_year)
+            else:
+                groups["past"].append(start_year)
+
+        plt.figure(figsize=(14, 6))
+
+        for group_name, years in groups.items():
+            if not years:
+                continue
+
+            years = sorted(years)
+            group_ces = {cp: [] for cp in checkpoints}
+
+            for start_year in years:
+                for cp in checkpoints:
+                    ce_values = []
+                    for year in range(start_year, start_year + window_size):
+                        year_str = str(year)
+
+                        # Dist 1
+                        d1 = dict1[cp].get(year_str, {"past":0,"present":0,"future":0})
+                        s1 = sum(d1.values())
+                        dist1_tensor = torch.tensor(
+                            [d1.get("past",0)/s1 if s1 else 1.0,
+                            d1.get("present",0)/s1 if s1 else 0.0,
+                            d1.get("future",0)/s1 if s1 else 0.0], dtype=torch.float32)
+
+                        # Dist 2
+                        d2 = dict2[cp].get(year_str, {"past":0,"present":0,"future":0})
+                        s2 = sum(d2.values())
+                        dist2_tensor = torch.tensor(
+                            [d2.get("past",0)/s2 if s2 else 1.0,
+                            d2.get("present",0)/s2 if s2 else 0.0,
+                            d2.get("future",0)/s2 if s2 else 0.0], dtype=torch.float32)
+
+                        ce = -(dist2_tensor * torch.log(dist1_tensor + 1e-12)).sum().item()
+                        ce_values.append(ce)
+
+                    if ce_values:
+                        group_ces[cp].append(np.mean(ce_values))
+
+            # Average across all start years in this group
+            avg_ces = []
+            valid_cps = []
+            for cp, vals in group_ces.items():
+                if vals:
+                    avg_ces.append(np.mean(vals))
+                    valid_cps.append(cp)
+
+            if avg_ces:
+                marker_shape = "s" if group_name == "future" else "o"
+                color = "red" if group_name == "future" else "blue"
+
+                # legend label with range + count
+                label = f"{group_name.capitalize()} ({years[0]}–{years[-1]}, avg of {len(years)} years)"
+
+                plt.plot(valid_cps, avg_ces, marker=marker_shape, color=color, label=label)
+
+        plt.legend(bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0.)
+        plt.xlabel("Checkpoint")
+        plt.ylabel("Average Cross-Entropy")
+        plt.title(f"Average CE over checkpoints ({label1} vs {label2}) — Past vs Future")
+        plt.ylim(0, 30)
+        plt.grid(True)
+
+        os.makedirs(f"{output_dir}", exist_ok=True)
+        save_path = f"{output_dir}/avg_ce_{label1}_{label2}_window_{window_size}_past_future.png"
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
         plt.close()
 
 
-    def plot_ce_vs_gold(self, dist_a, dist_b, gold_dist, checkpoint, output_dir="ce_plots", labels=("A vs Gold", "B vs Gold")):
+    def plot_ce_vs_gold(self, dist_a, dist_b, gold_dist, checkpoint, output_dir="ce_plots_2", labels=("A vs Gold", "B vs Gold")):
         """
         Plot CE loss per year for dist_a and dist_b against a gold distribution on the same plot.
 
@@ -535,69 +627,74 @@ class AnalyzerClass:
         checkpoint: int
         labels: tuple of labels for the legend
         """
-        years = range(self.year_range[0], self.year_range[1] + 1)
         ce_a = []
         ce_b = []
+        valid_years = []
 
-        for year in years:
+        for year in range(self.year_range[0], self.year_range[1] + 1):
             year_str = str(year)
 
-            # Gold distribution (normalize)
+            # Gold distribution
             d_gold = gold_dist[checkpoint].get(year_str, {"past":0, "present":0, "future":0})
             s_gold = sum(d_gold.values())
             if s_gold == 0:
-                gold_tensor = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
-            else:
-                gold_tensor = torch.tensor([
-                    d_gold.get("past", 0)/s_gold,
-                    d_gold.get("present", 0)/s_gold,
-                    d_gold.get("future", 0)/s_gold
-                ], dtype=torch.float32)
+                continue  # skip year entirely
+            gold_tensor = torch.tensor([
+                d_gold.get("past", 0)/s_gold,
+                d_gold.get("present", 0)/s_gold,
+                d_gold.get("future", 0)/s_gold
+            ], dtype=torch.float32)
 
-            # Distribution A (normalize)
+            # Distribution A
             d_a = dist_a[checkpoint].get(year_str, {"past":0, "present":0, "future":0})
             s_a = sum(d_a.values())
             if s_a == 0:
-                a_tensor = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
-            else:
-                a_tensor = torch.tensor([
-                    d_a.get("past", 0)/s_a,
-                    d_a.get("present", 0)/s_a,
-                    d_a.get("future", 0)/s_a
-                ], dtype=torch.float32)
+                continue
+            a_tensor = torch.tensor([
+                d_a.get("past", 0)/s_a,
+                d_a.get("present", 0)/s_a,
+                d_a.get("future", 0)/s_a
+            ], dtype=torch.float32)
 
-            # Distribution B (normalize)
+            # Distribution B
             d_b = dist_b[checkpoint].get(year_str, {"past":0, "present":0, "future":0})
             s_b = sum(d_b.values())
             if s_b == 0:
-                b_tensor = torch.tensor([1.0, 0.0, 0.0], dtype=torch.float32)
-            else:
-                b_tensor = torch.tensor([
-                    d_b.get("past", 0)/s_b,
-                    d_b.get("present", 0)/s_b,
-                    d_b.get("future", 0)/s_b
-                ], dtype=torch.float32)
+                continue
+            b_tensor = torch.tensor([
+                d_b.get("past", 0)/s_b,
+                d_b.get("present", 0)/s_b,
+                d_b.get("future", 0)/s_b
+            ], dtype=torch.float32)
 
             # CE (gold as target)
             ce_a.append(-(gold_tensor * torch.log(a_tensor + 1e-12)).sum().item())
             ce_b.append(-(gold_tensor * torch.log(b_tensor + 1e-12)).sum().item())
+            valid_years.append(year)
 
-        # Plot
+        # Plot only valid years
         plt.figure(figsize=(12,5))
-        plt.plot(list(years), ce_a, marker='o', color="orange", label=labels[0])
-        plt.plot(list(years), ce_b, marker='o', color="blue", label=labels[1])
+        plt.plot(valid_years, ce_a, marker='o', color="orange", label=labels[0])
+        plt.plot(valid_years, ce_b, marker='o', color="blue", label=labels[1])
         plt.xlabel("Year")
         plt.ylabel("Cross-Entropy Loss against Gold Distribution")
-        plt.title(f"Cross-Entropy Loss per Year | Checkpoint {checkpoint}")
+
+        # Explicit title with labels
+        plt.title(f"Cross-Entropy Loss per Year | Checkpoint {checkpoint}\nComparing {labels[0]} vs {labels[1]}", fontsize=13)
+
         plt.legend()
         plt.grid(True)
 
+        # Sanitize labels for filename
+        import re
+        label_a = re.sub(r"\W+", "_", labels[0])
+        label_b = re.sub(r"\W+", "_", labels[1])
+
         Path(output_dir).mkdir(parents=True, exist_ok=True)
+        filename = f"ce_per_year_ckpt{checkpoint}_{label_a}_vs_{label_b}.png"
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/ce_per_year_ckpt{checkpoint}.png", dpi=300)
+        plt.savefig(f"{output_dir}/{filename}", dpi=300)
         plt.close()
-
-
 
 
 #########################################################################################
@@ -609,6 +706,7 @@ def plot_distribution():
     analyzer1 = AnalyzerClass(year_range=(1950, 2050))
     checkpoints = [10000]
     analyzer1.plot_single_distribution_stacked(analyzer1.relative_model_data, checkpoints, label="Model predictions") # plot_width=30)
+    analyzer1.plot_single_distribution_stacked(analyzer1.relative_human_gold, checkpoints, label="Gold distribution") #, plot_width=30)
     analyzer1.plot_single_distribution_stacked(analyzer1.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence")
     analyzer1.plot_single_distribution_stacked(analyzer1.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence", plot_width=30)
 
@@ -628,14 +726,18 @@ def run_ce_loss():
 
     analyser = AnalyzerClass(year_range=(1950, 2050))
 
-    print("Training snapshot, string cooccur:", list(analyser.relative_training_data["string_match_cooccur"][10000].items())[:5])
-    analyser.compute_ce_loss_single(analyser.relative_training_data["string_match_cooccur"], checkpoint=10000, label="\'In [year]\' and [tense] cooccurence")
+    for cutoff_yr in [2022, 2023, 2024, 2025]:
+        print(f"cutoff_year = {cutoff_yr}")
+        analyser.populate_gold_data(cutoff_yr)
 
-    print("Training snapshot, string match:", list(analyser.relative_training_data["exact_str_matching"][10000].items())[:5])
-    analyser.compute_ce_loss_single(analyser.relative_training_data["exact_str_matching"], checkpoint=10000, label="training exact_str_matching")
+        # print("Model snapshot:", list(analyser.relative_model_data[10000].items())[:5])
+        analyser.compute_ce_loss_single(analyser.relative_model_data, checkpoint=10000, label=f"model, cutoff_year={cutoff_yr}")
 
-    print("Model snapshot:", list(analyser.relative_model_data[10000].items())[:5])
-    analyser.compute_ce_loss_single(analyser.relative_model_data, checkpoint=10000, label="model")
+        # print("Training snapshot, string cooccur:", list(analyser.relative_training_data["string_match_cooccur"][10000].items())[:5])
+        analyser.compute_ce_loss_single(analyser.relative_training_data["string_match_cooccur"], checkpoint=10000, label=f"\'In [year]\' and [tense] cooccurence, cutoff_year={cutoff_yr}")
+
+        # print("Training snapshot, string match:", list(analyser.relative_training_data["exact_str_matching"][10000].items())[:5])
+        # analyser.compute_ce_loss_single(analyser.relative_training_data["exact_str_matching"], checkpoint=10000, label="training exact_str_matching")
 
     # example results for 1800-2200:
     # Training snapshot: [('1800', {'past': 0.9709270433351618, 'future': 0.029072956664838178}), ('1801', {'past': 0.9863782051282052, 'future': 0.013621794871794872}), ('1802', {'past': 0.9871858058156727, 'future': 0.012814194184327254}), ('1803', {'past': 0.9840881272949816, 'future': 0.01591187270501836}), ('1804', {'past': 0.9807534807534808, 'future': 0.019246519246519246})]
@@ -648,8 +750,11 @@ def run_ce_loss_over_years():
     analyser = AnalyzerClass(year_range=(1950, 2050))
     # the ground truth distribution MUST be the third distribution arg
     
-    analyser.plot_ce_vs_gold(analyser.relative_model_data, analyser.relative_training_data["string_match_cooccur"], analyser.relative_human_gold, 10000, labels=("Model predictions", "\'In [year]\' and [tense] cooccurence\'"))
+    for cutoff_yr in [2022, 2023, 2024, 2025]:
+        print(f"cutoff_year = {cutoff_yr}")
+        analyser.populate_gold_data(cutoff_yr)
 
+        analyser.plot_ce_vs_gold(analyser.relative_model_data, analyser.relative_training_data["string_match_cooccur"], analyser.relative_human_gold, 10000, labels=(f"Model predictions, cutoff_year={cutoff_yr}", f"\'In [year]\' and [tense] cooccurence\', cutoff_year={cutoff_yr}"))
 
 def run_training_dynamics_spearman():
 
@@ -677,7 +782,7 @@ def run_training_dynamics_spearman():
     )  
 
 def run_training_dynamics_ce():
-    year_range=(2100, 2200)
+    year_range=(1950, 2050)
     analyser = AnalyzerClass(year_range=year_range)
 
     # CROSS ENTROPY
@@ -686,8 +791,8 @@ def run_training_dynamics_ce():
     analyser.plot_avg_ce_over_checkpoints(
         analyser.relative_human_gold,
         analyser.relative_model_data,
-        window_size=5,
-        start_years=range(year_range[0], year_range[1], 5), # every 20 yr increment in range, leaving 20 at the end for the window
+        window_size=1,
+        start_years=range(year_range[0], year_range[1], 1), # every 20 yr increment in range, leaving 20 at the end for the window
         label1="Gold distribution",
         label2="Model prediction",
     )  
@@ -695,11 +800,22 @@ def run_training_dynamics_ce():
     analyser.plot_avg_ce_over_checkpoints(
         analyser.relative_human_gold,
         analyser.relative_training_data["string_match_cooccur"],
-        window_size=5,
-        start_years=range(year_range[0], year_range[1], 5), # every 20 yr increment in range, leaving 20 at the end for the window
+        window_size=1,
+        start_years=range(year_range[0], year_range[1]), # every 20 yr increment in range, leaving 20 at the end for the window
         label1="Gold distribution",
         label2="\'In [year]\' and [tense] cooccurence",
     )  
+
+    # analyser.plot_avg_ce_past_future_checkpoints(
+    #     analyser.relative_human_gold,
+    #     analyser.relative_model_data,
+    #     window_size=1,
+    #     start_years=range(year_range[0], year_range[1]), # every 20 yr increment in range, leaving 20 at the end for the window
+    #     label1="Gold distribution",
+    #     label2="Model prediction",
+    # )  
+
+
 
 def run_training_dynamic_output():
     year_range=(1950, 2050)
@@ -717,7 +833,7 @@ if __name__ == "__main__":
 
 
     # just run the ones you want:
-    
+
     # plot_distribution()
     # run_training_dynamic_output()    # this just plots the model output over cps in a big grid
 
@@ -727,4 +843,4 @@ if __name__ == "__main__":
     run_ce_loss_over_years()
     # run_spearman_over_years()
 
-    # run_ce_loss()
+    # run_ce_loss() # this is on command line; results
