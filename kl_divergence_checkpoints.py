@@ -22,19 +22,21 @@ COUNT_TYPE_TO_FILE = {
 TENSE_MAPPING = {
     "was": "past",
     "were": "past",
-    # "is": "present",
-    # "are": "present",
+    "is": "present",
+    "are": "present",
     "will": "future",
 }
 
 
 class SpearmanAnalyzer:
-    def __init__(self, checkpoint_dir=MODEL_PREDICTIONS_FILE,
+    def __init__(self, tense_mapping, checkpoint_dir=MODEL_PREDICTIONS_FILE,
                  data_source="in_year_there_word_counts",
-                 year_range=(1000, 2999)):
+                 year_range=(1000, 2999), model_name="OLMo"): # TODO change for pythia
+        self.tense_mapping = tense_mapping
         self.checkpoint_dir = checkpoint_dir
         self.data_source = data_source
         self.year_range = year_range
+        self.model_name = model_name
         self.absolute_training_data = {}
         self.relative_training_data = {}
         self.model_data = {}
@@ -51,19 +53,44 @@ class SpearmanAnalyzer:
 
     # Add these class attributes for consistent plotting
     TENSE_ORDER = ["past", "present", "future"]  # strict plotting order
-    TENSE_COLORS = {"past": "orange", "present": "purple", "future": "green"}
+    TENSE_COLORS = {"past": "orange", "future": "green", "present": "#4b0082"}
 
 
     def populate_gold_data(self):
         self.relative_human_gold = {}
 
-        # Define the gold distribution per year
+        # Get available tenses from the tense mapping
+        available_tenses = set(self.tense_mapping.values())
+        
+        # Define the gold distribution per year based on available tenses
         gold_per_year = {}
         for year in range(self.year_range[0], self.year_range[1] + 1):
-            if year <= 2022:
-                gold_per_year[str(year)] = {"past": 1.0, "present": 0.0, "future": 0.0}
+            year_dist = {}
+            
+            if available_tenses == {"past", "present", "future"}:
+                # All three tenses: past before 2024, present in 2024, future after 2024
+                if year < 2024:
+                    year_dist = {"past": 1.0, "present": 0.0, "future": 0.0}
+                elif year == 2024:
+                    year_dist = {"past": 0.0, "present": 1.0, "future": 0.0}
+                else:  # year > 2024
+                    year_dist = {"past": 0.0, "present": 0.0, "future": 1.0}
+            elif available_tenses == {"past", "future"}:
+                # Only past and future: past up to 2024, future after 2024
+                if year <= 2024:
+                    year_dist = {"past": 1.0, "future": 0.0}
+                else:
+                    year_dist = {"past": 0.0, "future": 1.0}
+            elif available_tenses == {"past", "present"}:
+                # Only past and present: past up to 2024, present after 2024
+                if year <= 2024:
+                    year_dist = {"past": 1.0, "present": 0.0}
+                else:
+                    year_dist = {"past": 0.0, "present": 1.0}
             else:
-                gold_per_year[str(year)] = {"past": 0.0, "present": 0.0, "future": 1.0}
+                raise ValueError(f"Invalid tense combination: {available_tenses}")
+                
+            gold_per_year[str(year)] = year_dist
 
         # Default checkpoint list
         cps = range(250, 10001, 250)
@@ -94,7 +121,7 @@ class SpearmanAnalyzer:
                 if not (self.year_range[0] <= year_int <= self.year_range[1]):
                     continue
                 year_to_counts[year] = {
-                    w: counts.get(w, 0) for w in TENSE_MAPPING if w in counts
+                    w: counts.get(w, 0) for w in self.tense_mapping if w in counts
                 }
 
             results[cp] = year_to_counts
@@ -103,12 +130,12 @@ class SpearmanAnalyzer:
 
     def _counts_to_probs(self, counts):
         totals = {}
-        for w, cat in TENSE_MAPPING.items():
+        for w, cat in self.tense_mapping.items():
             totals.setdefault(cat, 0)
             totals[cat] += counts.get(w, 0)
         grand_total = sum(totals.values())
         if grand_total == 0:
-            return {cat: 0 for cat in set(TENSE_MAPPING.values())}
+            return {cat: 0 for cat in set(self.tense_mapping.values())}
         return {cat: val / grand_total for cat, val in totals.items()}
 
     def load_relative_training_data(self, count_type):
@@ -135,12 +162,12 @@ class SpearmanAnalyzer:
         for cp, year_dict in abs_data.items():
             total_counts = {}
             for counts in year_dict.values():
-                for w, cat in TENSE_MAPPING.items():
+                for w, cat in self.tense_mapping.items():
                     total_counts[cat] = total_counts.get(cat, 0) + counts.get(w, 0)
 
             grand_total = sum(total_counts.values())
             if grand_total == 0:
-                avg_probs = {cat: 0 for cat in set(TENSE_MAPPING.values())}
+                avg_probs = {cat: 0 for cat in set(self.tense_mapping.values())}
             else:
                 avg_probs = {cat: val / grand_total for cat, val in total_counts.items()}
 
@@ -166,7 +193,7 @@ class SpearmanAnalyzer:
                 if not (self.year_range[0] <= year_int <= self.year_range[1]):
                     continue
                 year_to_probs[year] = {
-                    w: counts.get(w, 0.0) for w in TENSE_MAPPING if w in counts
+                    w: counts.get(w, 0.0) for w in self.tense_mapping if w in counts
                 }
 
             results[cp] = year_to_probs
@@ -198,8 +225,8 @@ class SpearmanAnalyzer:
         train_data = training_dict
         model_data = self.relative_model_data
 
-        # Only include tenses that exist in TENSE_MAPPING
-        tenses_to_plot = [t for t in self.TENSE_ORDER if t in set(TENSE_MAPPING.values())]
+        # Only include tenses that exist in tense_mapping
+        tenses_to_plot = [t for t in self.TENSE_ORDER if t in set(self.tense_mapping.values())]
 
         for ckpt in checkpoints:
             if ckpt not in model_data:
@@ -217,27 +244,30 @@ class SpearmanAnalyzer:
             bottom = np.zeros(len(years))
             for tense in tenses_to_plot:
                 vals = np.array([train_cp_data[y].get(tense, 0) for y in years])
-                axes[0].bar(ind, vals, bottom=bottom, label=tense, color=self.TENSE_COLORS[tense])
+                axes[0].bar(ind, vals, bottom=bottom, label=tense, color=self.TENSE_COLORS[tense], width=1.0)
                 bottom += vals
             axes[0].set_title(f"{label} Data")
             axes[0].set_xticks(ind[::max(1, len(ind)//20)])
             axes[0].set_xticklabels(years[::max(1, len(ind)//20)], rotation=45)
             axes[0].set_ylabel("Probability")
-            axes[0].legend()
+            axes[0].set_xlim(-0.5, len(years) - 0.5)
+            axes[0].legend(bbox_to_anchor=(1.05, 1), loc='upper left')
 
             # ---- Model Data ----
             bottom = np.zeros(len(years))
             for tense in tenses_to_plot:
                 vals = np.array([model_cp_data[y].get(tense, 0) for y in years])
-                axes[1].bar(ind, vals, bottom=bottom, label=tense, color=self.TENSE_COLORS[tense])
+                axes[1].bar(ind, vals, bottom=bottom, label=tense, color=self.TENSE_COLORS[tense], width=1.0)
                 bottom += vals
             axes[1].set_title(f"Model Checkpoint {ckpt}")
             axes[1].set_xticks(ind[::max(1, len(ind)//20)])
             axes[1].set_xticklabels(years[::max(1, len(ind)//20)], rotation=45)
+            axes[1].set_xlim(-0.5, len(years) - 0.5)
 
             fig.suptitle(f"Year Distributions | Stacked Bars | Checkpoint {ckpt}")
             plt.tight_layout()
-            plt.savefig(f"{output_dir}/{label}/stacked_year_distribution_ckpt{ckpt}.png", dpi=300)
+            filename = f"{output_dir}/{label}/{self.model_name}_stacked_year_distribution_{label}_ckpt{ckpt}_years{self.year_range[0]}-{self.year_range[1]}.png"
+            plt.savefig(filename, dpi=300)
             plt.close()
 
 
@@ -249,7 +279,7 @@ class SpearmanAnalyzer:
         
         Path(f"{output_dir}/{label}").mkdir(parents=True, exist_ok=True)
 
-        tenses_to_plot = [t for t in self.TENSE_ORDER if t in set(TENSE_MAPPING.values())]
+        tenses_to_plot = [t for t in self.TENSE_ORDER if t in set(self.tense_mapping.values())]
 
         for ckpt in checkpoints:
             if ckpt not in dist_dict:
@@ -265,17 +295,20 @@ class SpearmanAnalyzer:
 
             for tense in tenses_to_plot:
                 vals = np.array([cp_data[y].get(tense, 0) for y in years])
-                ax.bar(ind, vals, bottom=bottom, label=tense, color=self.TENSE_COLORS[tense])
+                ax.bar(ind, vals, bottom=bottom, label=tense, color=self.TENSE_COLORS[tense], width=1.0)
                 bottom += vals
 
             ax.set_title(f"{label} | Checkpoint {ckpt}")
             ax.set_xticks(ind[::max(1, len(ind)//20)])
             ax.set_xticklabels(years[::max(1, len(ind)//20)], rotation=45)
             ax.set_ylabel("Probability")
-            ax.legend()
+            ax.set_xlim(-0.5, len(years) - 0.5)
+            ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
 
-            save_path = f"{output_dir}/{label}/{self.year_range[0]}_{self.year_range[1]}/stacked_year_distribution_ckpt{ckpt}.png"
+            save_path = f"{output_dir}/{label}/{self.year_range[0]}_{self.year_range[1]}/{self.model_name}_single_distribution_{label}_ckpt{ckpt}_years{self.year_range[0]}-{self.year_range[1]}.png"
             plt.tight_layout()
+            
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
             plt.savefig(save_path, dpi=300)
             plt.close()
 
@@ -328,22 +361,24 @@ class SpearmanAnalyzer:
 
         # Path(f"{output_dir}/{label}").mkdir(parents=True, exist_ok=True)
         plt.tight_layout()
-        plt.savefig(f"{output_dir}/spearman_{tense}_years_{self.year_range[0]}_{self.year_range[1]}_ckpt{checkpoint}_window{window}_{label}.png", dpi=300)
+        filename = f"{output_dir}/{self.model_name}_spearman_{tense}_{label}_ckpt{checkpoint}_window{window}_years{self.year_range[0]}-{self.year_range[1]}.png"
+        plt.savefig(filename, dpi=300)
         plt.close()
 
 
-    def compute_ce_loss_single(self, input_dict, checkpoint, label="training"):
+    def compute_ce_loss_single(self, input_dict, checkpoint, label="training", compute_binary_losses=False):
         """
         Compute cross-entropy loss between predicted distribution (input_dict) 
         and human gold distribution (self.relative_human_gold).
         input_dict: dict like self.relative_training_data[...] or self.relative_model_data
         checkpoint: int
+        compute_binary_losses: if True, also compute binary losses for each tense vs non-tense
         """
         gold_cp_data = self.relative_human_gold[checkpoint]
         cp_data = input_dict[checkpoint]
         
-        # Get active tenses from TENSE_MAPPING
-        active_tenses = sorted(set(TENSE_MAPPING.values()))
+        # Get active tenses from tense_mapping
+        active_tenses = sorted(set(self.tense_mapping.values()))
         
         probs = []
         gold = []
@@ -378,6 +413,37 @@ class SpearmanAnalyzer:
         loss = -(gold_tensor * log_probs).sum(dim=1).mean()
 
         print(f"{label} | Checkpoint {checkpoint} | CE Loss: {loss:.4f} | Years used: {years_used} | Years skipped: {years_skipped}")
+        
+        # Compute binary losses if requested
+        if compute_binary_losses:
+            for i, target_tense in enumerate(active_tenses):
+                # Create binary distributions: target tense vs all others
+                binary_probs = []
+                binary_gold = []
+                
+                for pred_row, gold_row in zip(probs, gold):
+                    # Binary predicted: [target_tense_prob, sum_of_other_tenses_prob]
+                    target_prob = pred_row[i]
+                    other_prob = sum(pred_row[j] for j in range(len(pred_row)) if j != i)
+                    binary_pred = [target_prob, other_prob]
+                    
+                    # Binary gold: [target_tense_gold, sum_of_other_tenses_gold]
+                    target_gold = gold_row[i]
+                    other_gold = sum(gold_row[j] for j in range(len(gold_row)) if j != i)
+                    binary_gold_dist = [target_gold, other_gold]
+                    
+                    binary_probs.append(binary_pred)
+                    binary_gold.append(binary_gold_dist)
+                
+                # Compute binary CE loss
+                binary_probs_tensor = torch.tensor(binary_probs, dtype=torch.float32)
+                binary_gold_tensor = torch.tensor(binary_gold, dtype=torch.float32)
+                
+                binary_log_probs = torch.log(binary_probs_tensor + 1e-12)
+                binary_loss = -(binary_gold_tensor * binary_log_probs).sum(dim=1).mean()
+                
+                print(f"{label} | Checkpoint {checkpoint} | Binary CE Loss ({target_tense} vs non-{target_tense}): {binary_loss:.4f}")
+        
         return loss.item()
 
 
@@ -433,11 +499,11 @@ class SpearmanAnalyzer:
         plt.xlabel("Checkpoint")
         plt.ylabel("Spearman correlation")
         plt.title(f"Spearman correlation over checkpoints ({label1} vs {label2})")
-        plt.legend()
+        plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
         plt.ylim(-1, 1)
 
         os.makedirs(f"{output_dir}", exist_ok=True)
-        save_path = f"{output_dir}/comparing_{label1}_{label2}_window_{window_size}_years_{self.year_range[0]}_{self.year_range[1]}.png"
+        save_path = f"{output_dir}/{self.model_name}_spearman_checkpoints_comparing_{label1}_{label2}_window{window_size}_years{self.year_range[0]}-{self.year_range[1]}.png"
         plt.savefig(save_path, dpi=300)
         plt.close()
 
@@ -449,7 +515,7 @@ class SpearmanAnalyzer:
 #########################################################################################
 
 def run_model_training_plots():
-    analyzer = SpearmanAnalyzer(year_range=(1950, 2050))
+    analyzer = SpearmanAnalyzer(TENSE_MAPPING, year_range=(1950, 2050))
 
     checkpoints_to_plot = [2000, 5000, 8000, 10000]
     analyzer.plot_training_vs_model_stacked(analyzer.relative_training_data['exact_str_matching_avg'], checkpoints_to_plot, label="exact_str_matching_avg")
@@ -459,12 +525,12 @@ def run_model_training_plots():
 
 def plot_distribution():
 
-    analyzer = SpearmanAnalyzer(year_range=(1950, 2050))
+    analyzer = SpearmanAnalyzer(TENSE_MAPPING, year_range=(1950, 2050))
     checkpoints = [2000, 5000, 8000, 10000]
     analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="string_match_cooccur")
     analyzer.plot_single_distribution_stacked(analyzer.relative_model_data, checkpoints, label="relative_model_data")
 
-    analyzer_full= SpearmanAnalyzer(year_range=(1600, 2200))
+    analyzer_full= SpearmanAnalyzer(TENSE_MAPPING, year_range=(1600, 2200))
     checkpoints = [2000, 5000, 8000, 10000]
     analyzer_full.plot_single_distribution_stacked(analyzer_full.relative_training_data["string_match_cooccur"], checkpoints, label="string_match_cooccur")
     analyzer_full.plot_single_distribution_stacked(analyzer_full.relative_model_data, checkpoints, label="relative_model_data")
@@ -472,8 +538,8 @@ def plot_distribution():
 
 def run_spearman():
 
-    # smanalyzer = SpearmanAnalyzer(year_range=(1950, 2050))
-    smanalyzer = SpearmanAnalyzer(year_range=(1800, 2200))
+    # smanalyzer = SpearmanAnalyzer(TENSE_MAPPING, year_range=(1950, 2050))
+    smanalyzer = SpearmanAnalyzer(TENSE_MAPPING, year_range=(1800, 2200))
 
     smanalyzer.plot_spearman_sliding_window(
         training_dict=smanalyzer.relative_training_data["string_match_cooccur"],
@@ -485,17 +551,52 @@ def run_spearman():
 
 def run_ce_loss():
 
-    analyser = SpearmanAnalyzer(year_range=(1950, 2050))
+    analyser = SpearmanAnalyzer(TENSE_MAPPING, year_range=(1800, 1900))
 
-
-    print("Training snapshot, string cooccur:", list(analyser.relative_training_data["string_match_cooccur"][10000].items())[:5])
+    # Debug: Print some sample data to see what's happening
+    print("=== DEBUG: Sample data inspection ===")
+    checkpoint = 10000
+    
+    # Check gold data
+    print("Gold data sample (first 3 years):")
+    print(f"Gold data keys for checkpoint {checkpoint}: {list(analyser.relative_human_gold.keys())}")
+    if checkpoint in analyser.relative_human_gold:
+        gold_cp_data = analyser.relative_human_gold[checkpoint]
+        print(f"Number of years in gold data: {len(gold_cp_data)}")
+        gold_items = list(gold_cp_data.items())[:3]
+        for year, dist in gold_items:
+            print(f"  {year}: {dist}")
+    else:
+        print(f"No gold data found for checkpoint {checkpoint}")
+    
+    print(f"Available tenses: {set(analyser.tense_mapping.values())}")
+    
+    # Check training data
+    print("\nTraining data sample (string_match_cooccur, first 3 years):")
+    train_items = list(analyser.relative_training_data["string_match_cooccur"][checkpoint].items())[:3]
+    for year, dist in train_items:
+        print(f"  {year}: {dist}")
+    
+    # Check model data
+    print("\nModel data sample (first 3 years):")
+    model_items = list(analyser.relative_model_data[checkpoint].items())[:3]
+    for year, dist in model_items:
+        print(f"  {year}: {dist}")
+    
+    print("\n=== Multi-class CE Loss ===")
+    # print("Training snapshot, string cooccur:", list(analyser.relative_training_data["string_match_cooccur"][10000].items())[:5])
     analyser.compute_ce_loss_single(analyser.relative_training_data["string_match_cooccur"], checkpoint=10000, label="training string_match_cooccur")
 
-    print("Training snapshot, string match:", list(analyser.relative_training_data["exact_str_matching"][10000].items())[:5])
+    # print("Training snapshot, exact string match:", list(analyser.relative_training_data["exact_str_matching"][10000].items())[:5])
     analyser.compute_ce_loss_single(analyser.relative_training_data["exact_str_matching"], checkpoint=10000, label="training exact_str_matching")
 
-    print("Model snapshot:", list(analyser.relative_model_data[10000].items())[:5])
+    # print("Model snapshot:", list(analyser.relative_model_data[10000].items())[:5])
     analyser.compute_ce_loss_single(analyser.relative_model_data, checkpoint=10000, label="model")
+
+    print("\n=== Binary CE Losses (tense vs non-tense) ===")
+    analyser.compute_ce_loss_single(analyser.relative_training_data["string_match_cooccur"], checkpoint=10000, label="training string_match_cooccur", compute_binary_losses=True)
+    analyser.compute_ce_loss_single(analyser.relative_training_data["exact_str_matching"], checkpoint=10000, label="training exact_str_matching", compute_binary_losses=True)
+    analyser.compute_ce_loss_single(analyser.relative_model_data, checkpoint=10000, label="model", compute_binary_losses=True)
 
     # example results for 1800-2200:
     # Training snapshot: [('1800', {'past': 0.9709270433351618, 'future': 0.029072956664838178}), ('1801', {'past': 0.9863782051282052, 'future': 0.013621794871794872}), ('1802', {'past': 0.9871858058156727, 'future': 0.012814194184327254}), ('1803', {'past': 0.9840881272949816, 'future': 0.01591187270501836}), ('1804', {'past': 0.9807534807534808, 'future': 0.019246519246519246})]
@@ -507,7 +608,7 @@ def run_ce_loss():
 def run_training_dynamics():
 
     # be careful to specify start years within the year range the plotting just errors out and gives 0's instead if you dont.
-    analyser = SpearmanAnalyzer(year_range=(1950, 2050))
+    analyser = SpearmanAnalyzer(TENSE_MAPPING, year_range=(1950, 2050))
 
     analyser.plot_spearman_over_checkpoints(
         analyser.relative_model_data,
@@ -530,7 +631,7 @@ def run_training_dynamics():
 
     # for working on specific ranges ood
     # year_range=(2350, 2450)
-    # oodanalyser = SpearmanAnalyzer(year_range=year_range)
+    # oodanalyser = SpearmanAnalyzer(TENSE_MAPPING, year_range=year_range)
 
     # oodanalyser.plot_spearman_over_checkpoints(
     #     oodanalyser.relative_model_data,
@@ -542,7 +643,34 @@ def run_training_dynamics():
     # )  
 
 
+def years_missing():
+    analyzer = SpearmanAnalyzer(TENSE_MAPPING, year_range=(1950, 2050))
+    checkpoints = [10000]
+    
+    # Check years with 0 counts for exact_str_matching method
+    checkpoint = 10000
+    if checkpoint in analyzer.absolute_training_data["exact_str_matching"]:
+        exact_str_data = analyzer.absolute_training_data["exact_str_matching"][checkpoint]
+        total_years_in_range = analyzer.year_range[1] - analyzer.year_range[0] + 1
+        zero_count_years = []
+        
+        for year in range(analyzer.year_range[0], analyzer.year_range[1] + 1):
+            year_str = str(year)
+            if year_str in exact_str_data:
+                # Check if all tense counts are 0
+                total_count = sum(exact_str_data[year_str].get(word, 0) for word in analyzer.tense_mapping.keys())
+                if total_count == 0:
+                    zero_count_years.append(year)
+        
+        print(f"Year range: {analyzer.year_range[0]}-{analyzer.year_range[1]}")
+        print(f"Total years in range: {total_years_in_range}")
+        print(f"Years with 0 counts across all tenses in exact_str_matching: {len(zero_count_years)}")
+        if len(zero_count_years) > 0:
+            print(f"Years with 0 counts: {sorted(zero_count_years)}")
+        else:
+            print("No years with 0 counts found!")
 ####################################################################################################################################################################################
+
 
 
 if __name__ == "__main__":
@@ -553,3 +681,10 @@ if __name__ == "__main__":
     # run_spearman()
     run_ce_loss()
     # run_training_dynamics()
+
+    
+    # analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="string_match_cooccur")
+    # analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["exact_str_matching"], checkpoints, label="exact_str_matching")
+    # analyzer.plot_single_distribution_stacked(analyzer.relative_model_data, checkpoints, label="relative_model_data")
+
+    
