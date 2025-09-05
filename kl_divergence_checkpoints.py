@@ -22,8 +22,8 @@ COUNT_TYPE_TO_FILE = {
 TENSE_MAPPING = {
     "was": "past",
     "were": "past",
-    "is": "present",
-    "are": "present",
+    # "is": "present",
+    # "are": "present",
     "will": "future",
 }
 
