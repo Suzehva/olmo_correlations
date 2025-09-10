@@ -7,6 +7,7 @@ import torch
 from scipy.stats import spearmanr
 import torch.nn.functional as F
 from matplotlib.lines import Line2D
+from datetime import datetime
 
 
 PYTHIA_PREDICTIONS_FILE = "../olmo_predictions/model_predictions__In__year__there/EleutherAI_pythia-1.4b-deduped_rev_step{cp}/pythia-1.4b-deduped_rev_step{cp}_predictions.json"
@@ -31,18 +32,24 @@ class AnalyzerClass:
     def __init__(self):
         # these all stored per tense (past/present/future), not per verb
         self.olmo_training_data = {}
-        self.olmo_relative_training_data = {}
-        self.olmo_predictions = {}
-        self.olmo_relative_predictions = {}
+        # in_year_there_word_counts: saves an entry like past/present/future, only entries if there are occurrences
+        # in_year_tense_sentence_counts: always has all entries, for past/present/future. If no occurences it's set to 0
 
-        self.pythia_training_data = {}
-        self.pythia_relative_training_data = {}
-        self.pythia_predictions = {}
-        self.pythia_relative_predictions = {}
+        self.olmo_relative_training_data = {}
+        # in_year_there_word_counts: has dictionaries for apst/present/future even if no occurrences (then set to 0)
+        # in_year_tense_sentence_counts: ^
+
+        self.olmo_predictions = {} # always has some probability for past, present, future
+        self.olmo_relative_predictions = {} # same but adds to one
+
+        self.pythia_training_data = {} # see olmo
+        self.pythia_relative_training_data = {} # see olmo
+        self.pythia_predictions = {} # see olmo
+        self.pythia_relative_predictions = {} # see olmo
 
         # this is per future/present/past 
-        self.olmo_gold_distribution = {}
-        self.pythia_gold_distribution = {}
+        self.olmo_gold_distribution = {} # has entries 0 or 1 for past and future
+        self.pythia_gold_distribution = {} # see olmo
 
         print("loading all data")
         self.load_training_data()
@@ -50,6 +57,39 @@ class AnalyzerClass:
         self.populate_gold_data(olmo_cutoff=2024, pythia_cutoff=2020)
         print("finished loading all data")
     
+    def save_all_data_to_file(self, filepath="analyzer_data.json"):
+        """
+        Save all analyzer data to a single JSON file.
+        
+        Args:
+            filepath: Path to save the data file
+        """
+        all_data = {
+            'metadata': {
+                'tense_mapping': TENSE_MAPPING,
+                'tense_order': TENSE_ORDER,
+                'tense_colors': TENSE_COLORS,
+                'total_years': TOTAL_YEARS,
+                'export_timestamp': datetime.now().isoformat(),
+            },
+            'olmo_training_data': self.olmo_training_data,
+            'olmo_relative_training_data': self.olmo_relative_training_data,
+            'olmo_predictions': self.olmo_predictions,
+            'olmo_relative_predictions': self.olmo_relative_predictions,
+            'olmo_gold_distribution': self.olmo_gold_distribution,
+            'pythia_training_data': self.pythia_training_data,
+            'pythia_relative_training_data': self.pythia_relative_training_data,
+            'pythia_predictions': self.pythia_predictions,
+            'pythia_relative_predictions': self.pythia_relative_predictions,
+            'pythia_gold_distribution': self.pythia_gold_distribution,
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(all_data, f, indent=2)
+        
+        print(f"All data saved to: {filepath}")
+        return filepath
+
     def _get_folder_name(self, model, checkpoint, data_type):
         """
         Generate standardized folder name for outputs.
@@ -316,58 +356,6 @@ class AnalyzerClass:
     #     plt.close()
 
 
-
-    # def plot_spearman_sliding_window(self, training_dict, tense, checkpoint, window=20, output_dir="spearman", label="exact_str_matching"):
-    #     """
-    #     Compute Spearman rank correlation between a training dict and model predictions
-    #     for a specific tense over a sliding window of years.
-
-    #     training_dict: dict like self.relative_training_data[...] or self.relative_human_gold
-    #     tense: "past", "present", or "future"
-    #     checkpoint: int checkpoint to use from model predictions
-    #     window: size of sliding window in years
-    #     """
-    #     if tense not in self.TENSE_ORDER:
-    #         raise ValueError(f"Tense '{tense}' not in defined tenses: {self.TENSE_ORDER}")
-        
-    #     if checkpoint not in self.relative_model_data:
-    #         raise ValueError(f"Checkpoint {checkpoint} not available in model data")
-
-    #     model_cp_data = self.relative_model_data[checkpoint]
-    #     train_cp_data = training_dict[checkpoint]
-
-    #     years = sorted(train_cp_data.keys())
-    #     spearman_vals = []
-    #     window_starts = []
-
-
-    #     # inside your loop over windows
-    #     for i in range(len(years) - window + 1):
-    #         win_years = years[i:i+window]
-
-    #         train_vals = [train_cp_data[y].get(tense, 0) for y in win_years]
-    #         model_vals = [model_cp_data[y].get(tense, 0) for y in win_years]
-
-    #         rho, _ = spearmanr(train_vals, model_vals)
-    #         spearman_vals.append(rho)
-
-    #         # Use center year instead of starting year
-    #         center_year = int((int(win_years[0]) + int(win_years[-1])) / 2)
-    #         window_starts.append(center_year)
-
-    #     # Then plot as before
-    #     plt.figure(figsize=(12, 5))
-    #     plt.plot(window_starts, spearman_vals, marker='o', color=self.TENSE_COLORS[tense])
-    #     plt.xlabel(f"Center Year of {window}-Year Window")
-    #     plt.ylabel("Spearman Rank Correlation")
-    #     plt.title(f"Spearman Rank Correlation ({tense}) | Checkpoint {checkpoint} | Counting method {label}")
-    #     plt.grid(True)
-
-    #     Path(f"{output_dir}").mkdir(parents=True, exist_ok=True)
-    #     plt.tight_layout()
-    #     filename = f"{output_dir}/{self.model_name}_spearman_{tense}_{label}_ckpt{checkpoint}_window{window}_years{self.year_range[0]}-{self.year_range[1]}.png"
-    #     plt.savefig(filename, dpi=300)
-    #     plt.close()
 
 
     # def compute_ce_loss_single(self, input_dict, checkpoint, label="training", compute_binary_losses=False):
@@ -848,17 +836,7 @@ def plot_training_data():
 #     analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence")
 #     analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence", plot_width=30)
 
-# def run_spearman_over_years():
 
-#     smanalyzer = AnalyzerClass(TENSE_MAPPING, year_range=(1940, 2060))
-
-#     smanalyzer.plot_spearman_sliding_window(
-#         training_dict=smanalyzer.relative_training_data["string_match_cooccur"],
-#         tense="past",
-#         checkpoint=10000,
-#         window=20,
-#         label="\'In [year]\' and [tense] cooccurence"
-#     )
 
 # def run_ce_loss():
 
@@ -984,7 +962,18 @@ def plot_training_data():
 
 
 
+def save_all_analyzer_data():
+    """
+    Example function to load and save all analyzer data.
+    """
+    analyzer = AnalyzerClass()
+    filepath = analyzer.save_all_data_to_file()
+    print(f"Data export completed. File saved: {filepath}")
+    return filepath
+
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
-    plot_training_data()
-    plot_model_predictions()
+
+    # plot_training_data()
+    # plot_model_predictions()
+    save_all_analyzer_data()
