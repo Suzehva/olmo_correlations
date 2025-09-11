@@ -26,7 +26,11 @@ TENSE_MAPPING = {
 }
 TENSE_ORDER = ["past", "present", "future"]  # strict plotting order
 TENSE_COLORS = {"past": "orange", "future": "green", "present": "#4b0082"}
+CROSS_ENTROPY_COLORS = ["grey", "blue", "red"]
 TOTAL_YEARS = (1000, 3000) # goes until 2999
+
+OLMO_CUTOFF = 2024
+PYTHIA_CUTOFF = 2020
 
 class AnalyzerClass:
     def __init__(self):
@@ -54,7 +58,7 @@ class AnalyzerClass:
         print("loading all data")
         self.load_training_data()
         self.load_model_predictions()
-        self.populate_gold_data(olmo_cutoff=2024, pythia_cutoff=2020)
+        self.populate_gold_data()
         print("finished loading all data")
     
 
@@ -106,23 +110,59 @@ class AnalyzerClass:
         print(f"All data saved to: {filepath}")
         return filepath
 
-    def compute_cross_entropy_over_range(self, dist_dict, which_model, checkpoint, year_start, year_end):
+    def compute_cross_entropy_over_range(self, dist_dict, which_model, checkpoint, year_start, year_end, min_samples=0):
         def compute_losses(pred_dist, gold_dist): 
-            # Normalize distributions if needed
             assert abs(sum(pred_dist) - 1) < 1e-6, f"pred_dist should sum to approximately 1, got {sum(pred_dist)} for model {which_model} at checkpoint {checkpoint} and year {year_str}"
             assert abs(sum(gold_dist) - 1) < 1e-6
             assert len(pred_dist) == 2
             
             # Compute cross-entropy: -sum(target * log(pred))
-            ce_loss = - gold_dist[0] * np.log(pred_dist[0]) - gold_dist[1] * np.log(pred_dist[1])
+            # Add small epsilon to avoid log(0)
+            epsilon = 1e-12
+            ce_loss = - gold_dist[0] * np.log(pred_dist[0] + epsilon) - gold_dist[1] * np.log(pred_dist[1] + epsilon)
+
+            if (gold_dist[0] == 1 and pred_dist[0] == 0) or (gold_dist[1] == 1 and pred_dist[1] == 0):
+                # gold distribution and this distribution have zero overlap; cap ce_loss at 3
+                print(f"Gold distribution and this distribution have zero overlap for model {which_model} at checkpoint {checkpoint} and year {year_str}")
+                ce_loss = 2.5
+            
+            # Fix floating-point precision errors: cross-entropy should never be negative
+            if ce_loss < 0:
+                if abs(ce_loss) < 1e-10:  # If it's just floating-point error
+                    ce_loss = 0.0  # Perfect predictions get exactly 0 cross-entropy
+                else:
+                    raise ValueError(f"Unexpected negative cross-entropy {ce_loss} for model {which_model} at checkpoint {checkpoint} and year {year_str}")
+            
+            # Check for invalid values
+            if not np.isfinite(ce_loss):
+                raise ValueError(f"ce_loss is not finite for model {which_model} at checkpoint {checkpoint} and year {year_str}")
+                
             return ce_loss
 
         # Get data for the specified checkpoint
         dist_cp = dist_dict[checkpoint]
         if which_model == "olmo":
             gold_cp = self.olmo_gold_distribution[checkpoint]
+            # Get raw counts to check minimum sample requirement (only for training data)
+            if dist_dict == self.olmo_relative_training_data["in_year_there_word_counts"]:
+                raw_counts_cp = self.olmo_training_data["in_year_there_word_counts"][checkpoint]
+            elif dist_dict == self.olmo_relative_training_data["in_year_tense_sentence_counts"]:
+                raw_counts_cp = self.olmo_training_data["in_year_tense_sentence_counts"][checkpoint]
+            elif dist_dict == self.olmo_relative_predictions:
+                raw_counts_cp = None  # Predictions don't have raw sample counts
+            else:
+                raise ValueError(f"Unknown OLMO distribution: {dist_dict}")
         elif which_model == "pythia":
             gold_cp = self.pythia_gold_distribution[checkpoint]
+            # Get raw counts to check minimum sample requirement (only for training data)
+            if dist_dict == self.pythia_relative_training_data["in_year_there_word_counts"]:
+                raw_counts_cp = self.pythia_training_data["in_year_there_word_counts"][checkpoint]
+            elif dist_dict == self.pythia_relative_training_data["in_year_tense_sentence_counts"]:
+                raw_counts_cp = self.pythia_training_data["in_year_tense_sentence_counts"][checkpoint]
+            elif dist_dict == self.pythia_relative_predictions:
+                raw_counts_cp = None  # Predictions don't have raw sample counts
+            else:
+                raise ValueError(f"Unknown Pythia distribution: {dist_dict}")
         else:
             raise ValueError(f"Invalid model: {which_model}")
         
@@ -131,15 +171,23 @@ class AnalyzerClass:
         experiment2_losses = {}  # only past vs future
         years_used_exp1 = []
         years_used_exp2 = []
-        years_skipped = []
         
         for year in range(year_start, year_end + 1):
             year_str = str(year)
+            # Exclude cutoff year from CE computations and plotting
+            if (which_model == "olmo" and year == OLMO_CUTOFF) or (which_model == "pythia" and year == PYTHIA_CUTOFF):
+                continue
             dist_data = dist_cp[year_str]
             if sum(dist_data.values()) == 0:
-                years_skipped.append(year_str)
-                print(f"no data for {year_str} in {which_model} at checkpoint {checkpoint}")
                 continue
+                
+            # Check minimum sample requirement if raw counts are available
+            if raw_counts_cp is not None:
+                raw_counts = raw_counts_cp[year_str]
+                total_samples = sum(raw_counts.values())
+                if total_samples < min_samples:
+                    print(f"Skipping year {year_str} for {which_model}: only {total_samples} samples (min required: {min_samples})")
+                    continue
             assert abs(sum(dist_data.values()) - 1) < 1e-6, f"dist_data should sum to 1, got {sum(dist_data.values())}"
             gold_data = gold_cp[year_str]
             assert abs(sum(gold_data.values()) - 1) < 1e-6, f"gold_data should sum to 1, got {sum(gold_data.values())}"
@@ -148,8 +196,6 @@ class AnalyzerClass:
             # experiment 1: combine present and future tense
             pred_dist = [dist_data["past"], dist_data["present"] + dist_data["future"]]
             if sum(pred_dist) == 0:
-                years_skipped.append(year_str)
-                print(f"no data for {year_str} in {which_model} at checkpoint {checkpoint}")
                 continue    
             ce_loss = compute_losses(pred_dist, gold_dist)
             if ce_loss is not None:
@@ -159,8 +205,6 @@ class AnalyzerClass:
             # experiment 2: disregard present tense
             pred_dist_sum = dist_data["past"] + dist_data["future"]
             if pred_dist_sum == 0:
-                years_skipped.append(year_str)
-                print(f"no data for {year_str} in {which_model} at checkpoint {checkpoint}")
                 continue
             pred_dist = [dist_data["past"] / pred_dist_sum, dist_data["future"] / pred_dist_sum]
             ce_loss = compute_losses(pred_dist, gold_dist)
@@ -169,23 +213,25 @@ class AnalyzerClass:
                 years_used_exp2.append(year_str)
 
         # Compute average losses for each experiment
-        avg_loss_exp1 = sum(experiment1_losses.values()) / len(experiment1_losses) if experiment1_losses else float('inf')
-        avg_loss_exp2 = sum(experiment2_losses.values()) / len(experiment2_losses) if experiment2_losses else float('inf')
+        avg_loss_exp1 = sum(experiment1_losses.values()) / len(experiment1_losses)
+        avg_loss_exp2 = sum(experiment2_losses.values()) / len(experiment2_losses)
         
         return {
             'experiment1_past_vs_present_future': {
                 'per_year_losses': experiment1_losses,
                 'average_loss': avg_loss_exp1,
                 'years_used': years_used_exp1,
+                'years_skipped': set(range(year_start, year_end+1)) - set(years_used_exp1),
                 'description': 'Binary classification: past vs (present + future)'
             },
             'experiment2_past_vs_future': {
                 'per_year_losses': experiment2_losses,
                 'average_loss': avg_loss_exp2,
                 'years_used': years_used_exp2,
+                'years_skipped': set(range(year_start, year_end+1)) - set(years_used_exp2),
                 'description': 'Binary classification: past vs future (ignoring present)'
             },
-            'years_skipped': years_skipped,
+            
         }
 
     def _get_folder_name(self, model, checkpoint, data_type):
@@ -313,7 +359,7 @@ class AnalyzerClass:
         self.pythia_predictions, self.pythia_relative_predictions = load_model_predictions(PYTHIA_PREDICTIONS_FILE, 1000)
 
 
-    def populate_gold_data(self, olmo_cutoff, pythia_cutoff):
+    def populate_gold_data(self):
         def populate_gold_distribution(cutoff):
             gold_per_year = {}
             for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1]):
@@ -330,13 +376,13 @@ class AnalyzerClass:
         pythia_cps = range(1000, 10001, 1000)
 
         for cp in olmo_cps:
-            self.olmo_gold_distribution[cp] = populate_gold_distribution(olmo_cutoff)
+            self.olmo_gold_distribution[cp] = populate_gold_distribution(OLMO_CUTOFF)
         for cp in pythia_cps:
-            self.pythia_gold_distribution[cp] = populate_gold_distribution(pythia_cutoff)
+            self.pythia_gold_distribution[cp] = populate_gold_distribution(PYTHIA_CUTOFF)
 
 
 
-    # # --- PLOTTING FUNCTIONS ---
+    # --- PLOTTING FUNCTIONS ---
 
     def bar_plot(self, dist_dict, model, data_type, checkpoint, year_start, year_end):
         """Plot stacked bars for a distribution at a specific checkpoint.
@@ -402,522 +448,221 @@ class AnalyzerClass:
         print(f"Saved: {save_path}")
 
 
-    # def plot_stacked_grid_over_checkpoints(
-    #     self, dist_dict, checkpoints, output_dir="single_dist_grid",
-    #     label="distribution", n_cols=5, n_rows=8
-    # ):
-    #     """
-    #     Plot stacked bars for a single distribution over multiple checkpoints
-    #     in a grid (n_cols x n_rows). Only show overall y-axis label and title.
-    #     """
-    #     print(f"Plotting stacked distribution grid: {label}")
-
-    #     Path(output_dir).mkdir(parents=True, exist_ok=True)
-
-    #     tenses_to_plot = [t for t in self.TENSE_ORDER if t in set(self.tense_mapping.values())]
-
-    #     fig, axes = plt.subplots(
-    #         n_rows, n_cols, figsize=(n_cols*3, n_rows*2.5), sharey=True
-    #     )
-    #     axes = axes.flatten()
-
-    #     for i, ckpt in enumerate(checkpoints):
-    #         ax = axes[i]
-    #         if ckpt not in dist_dict:
-    #             print(f"No data for checkpoint {ckpt}")
-    #             ax.axis('off')
-    #             continue
-
-    #         cp_data = dist_dict[ckpt]
-    #         years = sorted(cp_data.keys())
-    #         ind = np.arange(len(years))
-    #         bottom = np.zeros(len(years))
-
-    #         for tense in tenses_to_plot:
-    #             vals = np.array([cp_data[y].get(tense, 0) for y in years])
-    #             ax.bar(ind, vals, bottom=bottom, label=tense, color=self.TENSE_COLORS[tense])
-    #             bottom += vals
-
-    #         ax.set_title(f"Checkpoint {ckpt}", fontsize=8)
-    #         ax.axis('off')  # hide x/y ticks
-
-    #     # Hide any extra subplots
-    #     for j in range(i+1, n_cols*n_rows):
-    #         axes[j].axis('off')
-
-    #     # Overall labels and title
-    #     fig.suptitle(
-    #         f"{label} | Checkpoints {checkpoints[0]}-{checkpoints[-1]} | Years {self.year_range[0]}-{self.year_range[1]}",
-    #         fontsize=14
-    #     )
-    #     fig.text(0.03, 0.5, "Probability", va='center', rotation='vertical', fontsize=12)
-
-    #     # Adjust spacing to reduce outer margins but keep subplots separated
-    #     plt.subplots_adjust(
-    #         left=0.06, right=0.99, top=0.93, bottom=0.05,
-    #         hspace=0.3, wspace=0.25
-    #     )
-
-    #     save_path = f"{output_dir}/{label}_stacked_grid_{checkpoints[0]}_{checkpoints[-1]}.png"
-    #     plt.savefig(save_path, dpi=300)
-    #     plt.close()
-
-
-
-
-    # def compute_ce_loss_single(self, input_dict, checkpoint, label="training", compute_binary_losses=False):
-    #     """
-    #     Compute cross-entropy loss between predicted distribution (input_dict) 
-    #     and human gold distribution (self.relative_human_gold).
-    #     input_dict: dict like self.relative_training_data[...] or self.relative_model_data
-    #     checkpoint: int
-    #     compute_binary_losses: if True, also compute binary losses for each tense vs non-tense
-    #     """
-    #     gold_cp_data = self.relative_human_gold[checkpoint]
-    #     cp_data = input_dict[checkpoint]
+def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=1950, year_end=2050, output_dir="cross_entropy_plots"):
+    """Plot cross-entropy losses as lines for multiple distributions.
+    
+    Args:
+        ce_results_list: List of cross-entropy result dictionaries from compute_cross_entropy_over_range
+        labels_list: List of labels for each distribution
+        model_name: Model name for the plot title and filename
+        year_start: Start year (inclusive)
+        year_end: End year (inclusive)
+        output_dir: Directory to save the plots
+    """
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    # Create separate plots for each experiment
+    experiments = ['experiment1_past_vs_present_future', 'experiment2_past_vs_future']
+    experiment_titles = [
+        'Binary Classification: Past vs (Present + Future)',
+        'Binary Classification: Past vs Future (ignoring Present)'
+    ]
+    
+    for exp_key, exp_title in zip(experiments, experiment_titles):
+        fig, ax = plt.subplots(figsize=(14, 8))
         
-    #     # Get active tenses from tense_mapping
-    #     active_tenses = sorted(set(self.tense_mapping.values()))
+        all_years_plotted = []
+        all_losses_plotted = []
         
-    #     probs = []
-    #     gold = []
-    #     years_used = 0
-    #     years_skipped = 0
-
-    #     for year in range(self.year_range[0], self.year_range[1] + 1):
-    #         year_str = str(year)
-
-    #         # Predicted distribution (normalize if necessary)
-    #         d = cp_data.get(year_str, {tense: 0 for tense in active_tenses})
-    #         s = sum(d.get(tense, 0) for tense in active_tenses)
-    #         if s == 0:
-    #             years_skipped += 1
-    #             continue  # Skip this year if no data
-    #         else:
-    #             pred_dist = [d.get(tense, 0)/s for tense in active_tenses]
+        for i, (ce_result, label) in enumerate(zip(ce_results_list, labels_list)):
+            exp_data = ce_result[exp_key]
+            per_year_losses = exp_data['per_year_losses']
             
-    #         # Gold distribution (already normalized)
-    #         g = gold_cp_data.get(year_str, {tense: 0 for tense in active_tenses})
-    #         gold_dist = [g.get(tense, 0) for tense in active_tenses]
+            # Filter years and prepare data for plotting
+            years = []
+            losses = []
             
-    #         probs.append(pred_dist)
-    #         gold.append(gold_dist)
-    #         years_used += 1
-        
-    #     # Convert to tensors and compute loss
-    #     probs_tensor = torch.tensor(probs, dtype=torch.float32)
-    #     gold_tensor = torch.tensor(gold, dtype=torch.float32)
-        
-    #     log_probs = torch.log(probs_tensor + 1e-12)
-    #     loss = -(gold_tensor * log_probs).sum(dim=1).mean()
-
-    #     print(f"{label} | Checkpoint {checkpoint} | CE Loss: {loss:.4f} | Years used: {years_used} | Years skipped: {years_skipped}")
-        
-    #     # Compute binary losses if requested
-    #     if compute_binary_losses:
-    #         for i, target_tense in enumerate(active_tenses):
-    #             # Create binary distributions: target tense vs all others
-    #             binary_probs = []
-    #             binary_gold = []
+            for year in exp_data['years_used']:
+                year_int = int(year)
+                # Filter by year_start and year_end
+                if year_start <= year_int <= year_end:
+                    years.append(year_int)
+                    loss_value = per_year_losses[year]
+                    losses.append(loss_value)
+    
+            if years and losses:
+                color = CROSS_ENTROPY_COLORS[i % len(CROSS_ENTROPY_COLORS)]
                 
-    #             for pred_row, gold_row in zip(probs, gold):
-    #                 # Binary predicted: [target_tense_prob, sum_of_other_tenses_prob]
-    #                 target_prob = pred_row[i]
-    #                 other_prob = sum(pred_row[j] for j in range(len(pred_row)) if j != i)
-    #                 binary_pred = [target_prob, other_prob]
-                    
-    #                 # Binary gold: [target_tense_gold, sum_of_other_tenses_gold]
-    #                 target_gold = gold_row[i]
-    #                 other_gold = sum(gold_row[j] for j in range(len(gold_row)) if j != i)
-    #                 binary_gold_dist = [target_gold, other_gold]
-                    
-    #                 binary_probs.append(binary_pred)
-    #                 binary_gold.append(binary_gold_dist)
+                avg_loss = exp_data['average_loss']
+                avg_display = f"{avg_loss:.4f}"
                 
-    #             # Compute binary CE loss
-    #             binary_probs_tensor = torch.tensor(binary_probs, dtype=torch.float32)
-    #             binary_gold_tensor = torch.tensor(binary_gold, dtype=torch.float32)
+                ax.scatter(years, losses, 
+                          label=f"{label} (avg: {avg_display}, num_years: {len(years)})", 
+                          color=color, s=20, alpha=0.7)  # Increased alpha for visibility
                 
-    #             binary_log_probs = torch.log(binary_probs_tensor + 1e-12)
-    #             binary_loss = -(binary_gold_tensor * binary_log_probs).sum(dim=1).mean()
-                
-    #             print(f"{label} | Checkpoint {checkpoint} | Binary CE Loss ({target_tense} vs non-{target_tense}): {binary_loss:.4f}")
+                # Collect all plotted data for axis limits
+                all_years_plotted.extend(years)
+                all_losses_plotted.extend(losses)
+            else:
+                print(f"  WARNING: No data to plot for {label}")
         
-    #     return loss.item()
-
-
-    # def compute_spearman_window(self, dict1, dict2, checkpoint, start_year, window_size):
-    #     """
-    #     Compute Spearman correlation between two distributions over a sliding window.
-    #     """
-    #     years = [str(y) for y in range(start_year, start_year + window_size)]
-    #     d1_vals, d2_vals = [], []
-
-    #     for y in years:
-    #         d1 = dict1[checkpoint].get(y, {"past": 0, "future": 0})
-    #         d2 = dict2[checkpoint].get(y, {"past": 0, "future": 0})
-    #         d1_vals.append([d1["past"], d1["future"]])
-    #         d2_vals.append([d2["past"], d2["future"]])
-
-    #     # flatten: (past + future) across window
-    #     d1_flat = [v for pair in d1_vals for v in pair]
-    #     d2_flat = [v for pair in d2_vals for v in pair]
-
-    #     rho, _ = spearmanr(d1_flat, d2_flat)
-    #     return rho if rho == rho else None  # return None if nan
-
-
-    # def plot_spearman_over_checkpoints(
-    #     self, dict1, dict2, window_size, start_years,
-    #     label1="data 1", label2="data 2", output_dir="spearman_cp"
-    # ):
-    #     """
-    #     Plot Spearman rank correlation over checkpoints for different start years (sliding windows).
-    #     Skip points where rho is None.
-    #     Use different marker shapes for start years before/after 2022.
-    #     """
-    #     checkpoints = sorted(dict1.keys())
-    #     colors = plt.cm.tab10(np.linspace(0, 1, len(start_years)))
-
-    #     plt.figure(figsize=(12, 6))
-
-    #     for color, start_year in zip(colors, start_years):
-    #         spearmans = []
-    #         valid_cps = []
-    #         for cp in checkpoints:
-    #             rho = self.compute_spearman_window(dict1, dict2, cp, start_year, window_size)
-    #             if rho is not None:
-    #                 spearmans.append(rho)
-    #                 valid_cps.append(cp)
-
-    #         if spearmans:
-    #             marker_shape = "s" if start_year >= 2022 else "o"  # square for future, circle for past
-    #             plt.plot(valid_cps, spearmans, marker=marker_shape, color=color,
-    #                     label=f"{start_year} - {start_year+window_size}", linestyle='-')
-
-    #     plt.xlabel("Checkpoint")
-    #     plt.ylabel("Spearman correlation")
-    #     plt.title(f"Spearman correlation over checkpoints ({label1} vs {label2})")
-    #     plt.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
-    #     plt.ylim(-1, 1)
-
-    #     os.makedirs(f"{output_dir}", exist_ok=True)
-    #     save_path = f"{output_dir}/{self.model_name}_spearman_checkpoints_comparing_{label1}_{label2}_window{window_size}_years{self.year_range[0]}-{self.year_range[1]}.png"
-    #     plt.savefig(save_path, dpi=300)
-    #     plt.close()
-
-
-    # def plot_avg_ce_over_checkpoints(self, dict1, dict2, window_size, start_years, 
-    #                                 label1="data 1", label2="data 2", output_dir="ce_cp"):
-    #     """
-    #     Plot average cross-entropy over checkpoints for different start years (sliding windows).
-    #     Only show first/last datalines in legend + marker shape meaning.
-    #     """
-    #     checkpoints = sorted(dict1.keys())
-
-    #     cmap = plt.get_cmap("rainbow")
-    #     colors = cmap(np.linspace(0, 1, len(start_years)))[::-1]
-
-    #     plt.figure(figsize=(14, 6))
-
-    #     handles, labels = [], []  # collect for custom legend
-
-    #     for idx, (color, start_year) in enumerate(zip(colors, start_years)):
-    #         avg_ces, valid_cps = [], []
-
-    #         for cp in checkpoints:
-    #             ce_values = []
-    #             for year in range(start_year, start_year + window_size):
-    #                 year_str = str(year)
-
-    #                 # Dist 1
-    #                 d1 = dict1[cp].get(year_str, {"past":0,"present":0,"future":0})
-    #                 s1 = sum(d1.values())
-    #                 dist1_tensor = torch.tensor(
-    #                     [d1.get("past",0)/s1 if s1 else 1.0,
-    #                     d1.get("present",0)/s1 if s1 else 0.0,
-    #                     d1.get("future",0)/s1 if s1 else 0.0], dtype=torch.float32)
-
-    #                 # Dist 2
-    #                 d2 = dict2[cp].get(year_str, {"past":0,"present":0,"future":0})
-    #                 s2 = sum(d2.values())
-    #                 dist2_tensor = torch.tensor(
-    #                     [d2.get("past",0)/s2 if s2 else 1.0,
-    #                     d2.get("present",0)/s2 if s2 else 0.0,
-    #                     d2.get("future",0)/s2 if s2 else 0.0], dtype=torch.float32)
-
-    #                 ce = -(dist2_tensor * torch.log(dist1_tensor + 1e-12)).sum().item()
-    #                 ce_values.append(ce)
-
-    #             if ce_values:
-    #                 avg_ces.append(np.mean(ce_values))
-    #                 valid_cps.append(cp)
-
-    #         if avg_ces:
-    #             marker_shape = "s" if start_year >= 2022 else "o"
-    #             line, = plt.plot(valid_cps, avg_ces, marker=marker_shape, 
-    #                             color=color, linestyle='-')
-
-    #             # Only add legend entry for first and last dataline
-    #             if idx == 0 or idx == len(start_years)-1:
-    #                 if window_size == 1:
-    #                     legend_label = f"{start_year}"
-    #                 else:
-    #                     legend_label = f"{start_year} - {start_year + window_size}"
-    #                 labels.append(legend_label)
-    #                 handles.append(line)
-
-    #     # Add marker-shape legend entries
-    #     custom_handles = [
-    #         Line2D([0], [0], color="k", marker="o", linestyle="", label="Past"),
-    #         Line2D([0], [0], color="k", marker="s", linestyle="", label="Future"),
-    #     ]
-    #     handles.extend(custom_handles)
-    #     labels.extend([h.get_label() for h in custom_handles])
-
-    #     plt.legend(handles, labels,
-    #             bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0.)
-
-    #     plt.xlabel("Checkpoint")
-    #     plt.ylabel("Average Cross-Entropy")
-    #     plt.title(f"Average CE over checkpoints ({label1} vs {label2})")
-    #     plt.ylim(0, 30)
-    #     plt.grid(True)
-
-    #     os.makedirs(f"{output_dir}", exist_ok=True)
-    #     save_path = f"{output_dir}/avg_ce_{label1}_{label2}_window_{window_size}_years_{self.year_range[0]}_{self.year_range[1]}.png"
-    #     plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    #     plt.close()
-
-    # def plot_avg_ce_past_future_checkpoints(self, dict1, dict2, window_size, start_years,
-    #                                         label1="data 1", label2="data 2", output_dir="ce_cp"):
-    #     """
-    #     Plot average cross-entropy over checkpoints for all start years collapsed into two lines:
-    #     one for 'past' (<2022) and one for 'future' (>=2022).
-    #     Legend includes year range and count.
-    #     """
-    #     checkpoints = sorted(dict1.keys())
-    #     groups = {"past": [], "future": []}
-
-    #     # separate years into past/future groups
-    #     for start_year in start_years:
-    #         if start_year >= 2022:
-    #             groups["future"].append(start_year)
-    #         else:
-    #             groups["past"].append(start_year)
-
-    #     plt.figure(figsize=(14, 6))
-
-    #     for group_name, years in groups.items():
-    #         if not years:
-    #             continue
-
-    #         years = sorted(years)
-    #         group_ces = {cp: [] for cp in checkpoints}
-
-    #         for start_year in years:
-    #             for cp in checkpoints:
-    #                 ce_values = []
-    #                 for year in range(start_year, start_year + window_size):
-    #                     year_str = str(year)
-
-    #                     # Dist 1
-    #                     d1 = dict1[cp].get(year_str, {"past":0,"present":0,"future":0})
-    #                     s1 = sum(d1.values())
-    #                     dist1_tensor = torch.tensor(
-    #                         [d1.get("past",0)/s1 if s1 else 1.0,
-    #                         d1.get("present",0)/s1 if s1 else 0.0,
-    #                         d1.get("future",0)/s1 if s1 else 0.0], dtype=torch.float32)
-
-    #                     # Dist 2
-    #                     d2 = dict2[cp].get(year_str, {"past":0,"present":0,"future":0})
-    #                     s2 = sum(d2.values())
-    #                     dist2_tensor = torch.tensor(
-    #                         [d2.get("past",0)/s2 if s2 else 1.0,
-    #                         d2.get("present",0)/s2 if s2 else 0.0,
-    #                         d2.get("future",0)/s2 if s2 else 0.0], dtype=torch.float32)
-
-    #                     ce = -(dist2_tensor * torch.log(dist1_tensor + 1e-12)).sum().item()
-    #                     ce_values.append(ce)
-
-    #                 if ce_values:
-    #                     group_ces[cp].append(np.mean(ce_values))
-
-    #         # Average across all start years in this group
-    #         avg_ces = []
-    #         valid_cps = []
-    #         for cp, vals in group_ces.items():
-    #             if vals:
-    #                 avg_ces.append(np.mean(vals))
-    #                 valid_cps.append(cp)
-
-    #         if avg_ces:
-    #             marker_shape = "s" if group_name == "future" else "o"
-    #             color = "red" if group_name == "future" else "blue"
-
-    #             # legend label with range + count
-    #             label = f"{group_name.capitalize()} ({years[0]}–{years[-1]}, avg of {len(years)} years)"
-
-    #             plt.plot(valid_cps, avg_ces, marker=marker_shape, color=color, label=label)
-
-    #     plt.legend(bbox_to_anchor=(1.02, 1), loc="upper left", borderaxespad=0.)
-    #     plt.xlabel("Checkpoint")
-    #     plt.ylabel("Average Cross-Entropy")
-    #     plt.title(f"Average CE over checkpoints ({label1} vs {label2}) — Past vs Future")
-    #     plt.ylim(0, 30)
-    #     plt.grid(True)
-
-    #     os.makedirs(f"{output_dir}", exist_ok=True)
-    #     save_path = f"{output_dir}/avg_ce_{label1}_{label2}_window_{window_size}_past_future.png"
-    #     plt.savefig(save_path, dpi=300, bbox_inches="tight")
-    #     plt.close()
-
-
-    # def plot_ce_vs_gold(self, dist_a, dist_b, gold_dist, checkpoint, output_dir="ce_plots", labels=("A vs Gold", "B vs Gold")):
-    #     """
-    #     Plot CE loss per year for dist_a and dist_b against a gold distribution on the same plot.
-
-    #     dist_a, dist_b, gold_dist: dict[checkpoint][year] -> {"past":..., "present":..., "future":...}
-    #     checkpoint: int
-    #     labels: tuple of labels for the legend
-    #     """
-    #     ce_a = []
-    #     ce_b = []
-    #     valid_years = []
-
-    #     for year in range(self.year_range[0], self.year_range[1] + 1):
-    #         year_str = str(year)
-
-    #         # Gold distribution
-    #         d_gold = gold_dist[checkpoint].get(year_str, {"past":0, "present":0, "future":0})
-    #         s_gold = sum(d_gold.values())
-    #         if s_gold == 0:
-    #             continue  # skip year entirely
-    #         gold_tensor = torch.tensor([
-    #             d_gold.get("past", 0)/s_gold,
-    #             d_gold.get("present", 0)/s_gold,
-    #             d_gold.get("future", 0)/s_gold
-    #         ], dtype=torch.float32)
-
-    #         # Distribution A
-    #         d_a = dist_a[checkpoint].get(year_str, {"past":0, "present":0, "future":0})
-    #         s_a = sum(d_a.values())
-    #         if s_a == 0:
-    #             continue
-    #         a_tensor = torch.tensor([
-    #             d_a.get("past", 0)/s_a,
-    #             d_a.get("present", 0)/s_a,
-    #             d_a.get("future", 0)/s_a
-    #         ], dtype=torch.float32)
-
-    #         # Distribution B
-    #         d_b = dist_b[checkpoint].get(year_str, {"past":0, "present":0, "future":0})
-    #         s_b = sum(d_b.values())
-    #         if s_b == 0:
-    #             continue
-    #         b_tensor = torch.tensor([
-    #             d_b.get("past", 0)/s_b,
-    #             d_b.get("present", 0)/s_b,
-    #             d_b.get("future", 0)/s_b
-    #         ], dtype=torch.float32)
-
-    #         # CE (gold as target)
-    #         ce_a.append(-(gold_tensor * torch.log(a_tensor + 1e-12)).sum().item())
-    #         ce_b.append(-(gold_tensor * torch.log(b_tensor + 1e-12)).sum().item())
-    #         valid_years.append(year)
-
-    #     # Plot only valid years
-    #     plt.figure(figsize=(12,5))
-    #     plt.plot(valid_years, ce_a, marker='o', color="orange", label=labels[0])
-    #     plt.plot(valid_years, ce_b, marker='o', color="blue", label=labels[1])
-    #     plt.xlabel("Year")
-    #     plt.ylabel("Cross-Entropy Loss against Gold Distribution")
-    #     plt.title(f"Cross-Entropy Loss per Year | Checkpoint {checkpoint}")
-    #     plt.legend()
-    #     plt.grid(True)
-
-    #     Path(output_dir).mkdir(parents=True, exist_ok=True)
-    #     plt.tight_layout()
-    #     plt.savefig(f"{output_dir}/ce_per_year_ckpt{checkpoint}_{labels[0]}_{labels[1]}.png", dpi=300)
-    #     plt.close()
-
-    # def plot_binary_ce_vs_gold(self, dist_a, dist_b, gold_dist, checkpoint, cutoff_yr, output_dir="binary_ce_plots", labels=("A vs Gold", "B vs Gold")):
-    #     """
-    #     Plot binary CE loss per year for each tense vs non-tense for dist_a and dist_b against gold distribution.
-    #     Creates separate plots for each binary classification: past vs non-past, present vs non-present, future vs non-future.
+        # Format the plot
+        ax.set_xlabel('Year', fontsize=12)
+        ax.set_ylabel('Cross-Entropy Loss', fontsize=12)
+        ax.set_title(f'{model_name.upper()} - {exp_title}\nYears {year_start}-{year_end}', fontsize=14)
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.grid(True, alpha=0.3)
         
-    #     dist_a, dist_b, gold_dist: dict[checkpoint][year] -> {"past":..., "present":..., "future":...}
-    #     checkpoint: int
-    #     cutoff_yr: int used in gold data generation
-    #     labels: tuple of labels for the legend
-    #     """
-    #     # Get available tenses from the tense mapping
-    #     available_tenses = sorted(set(self.tense_mapping.values()))
+        # Use linear scale for y-axis to show zero values
+        # ax.set_yscale('log')  # Commented out - using linear scale
         
-    #     for target_tense in available_tenses:
-    #         ce_a_binary = []
-    #         ce_b_binary = []
-    #         valid_years = []
+        # Set axis limits based on actual plotted data
+        if all_years_plotted and all_losses_plotted:
+            # X-axis: set to requested range with some padding
+            ax.set_xlim(year_start - 5, year_end + 5)
+            
+            # Y-axis: set based on actual data with some padding
+            y_min, y_max = min(all_losses_plotted), max(all_losses_plotted)
+            # For linear scale, use additive padding
+            y_range = y_max - y_min
+            y_padding = max(0.05 * y_range, 0.1)  # At least 5% padding or 0.1 units
+            ax.set_ylim(max(0, y_min - y_padding), y_max + y_padding)
+        
+        # --- Per-figure summary (printed) ---
+        # Compute figure-specific averages (restricted to the plotted year range)
+        # and also averages restricted to the string-match years within the range
+        # Identify string-match index from labels
+        string_match_idx = None
+        for idx, lbl in enumerate(labels_list):
+            if "string match" in lbl.lower():
+                string_match_idx = idx
+                break
+        
+        print(f"\nSummary: {model_name.upper()} - {exp_title} | Years {year_start}-{year_end}")
+        
+        # Collect string-match years used (restricted to range), if available
+        string_match_years_in_range = []
+        if string_match_idx is not None:
+            sm_exp_data = ce_results_list[string_match_idx][exp_key]
+            for y in sm_exp_data['years_used']:
+                yi = int(y)
+                if year_start <= yi <= year_end:
+                    string_match_years_in_range.append(yi)
+        
+        for i, (ce_result, label) in enumerate(zip(ce_results_list, labels_list)):
+            exp_data = ce_result[exp_key]
+            # Years used for this dataset within range
+            years_in_range = []
+            for y in exp_data['years_used']:
+                yi = int(y)
+                if year_start <= yi <= year_end:
+                    years_in_range.append(yi)
+            
+            # Average over its own years within range
+            own_losses = [exp_data['per_year_losses'][str(y)] for y in years_in_range if str(y) in exp_data['per_year_losses']]
+            if own_losses:
+                own_avg = sum(own_losses) / len(own_losses)
+                own_avg_str = f"{own_avg:.4f}"
+            else:
+                own_avg_str = "N/A"
+            
+            # Average over string-match years within range
+            if string_match_years_in_range:
+                sm_losses = [exp_data['per_year_losses'][str(y)] for y in string_match_years_in_range if str(y) in exp_data['per_year_losses']]
+                if sm_losses:
+                    sm_avg = sum(sm_losses) / len(sm_losses)
+                    sm_avg_str = f"{sm_avg:.4f}"
+                    sm_count = len(sm_losses)
+                else:
+                    sm_avg_str = "N/A"
+                    sm_count = 0
+            else:
+                sm_avg_str = "N/A"
+                sm_count = 0
+            
+            # Average over years NOT in string-match within range
+            non_sm_years_in_range = [y for y in years_in_range if y not in set(string_match_years_in_range)]
+            non_sm_losses = [exp_data['per_year_losses'][str(y)] for y in non_sm_years_in_range if str(y) in exp_data['per_year_losses']]
+            if non_sm_losses:
+                non_sm_avg = sum(non_sm_losses) / len(non_sm_losses)
+                non_sm_avg_str = f"{non_sm_avg:.4f}"
+                non_sm_count = len(non_sm_losses)
+            else:
+                non_sm_avg_str = "N/A"
+                non_sm_count = 0
+            
+            print(f"- {label}: avg={own_avg_str} over {len(own_losses)} yrs; avg@string-match={sm_avg_str} over {sm_count} yrs; avg@non-string-match={non_sm_avg_str} over {non_sm_count} yrs")
+        
+        # Save the plot
+        exp_name = exp_key.replace('experiment1_', '').replace('experiment2_', '')
+        filename = f"{model_name}_cross_entropy_{exp_name}_{year_start}_{year_end}.png"
+        save_path = Path(output_dir) / filename
+        
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=600, bbox_inches='tight')
+        plt.close()
+        print(f"Saved: {save_path}")
 
-    #         for year in range(self.year_range[0], self.year_range[1] + 1):
-    #             year_str = str(year)
+        # --- Additional figure: plot only years where ALL distributions have data (fair comparison) ---
+        # Compute intersection of years across all distributions for this experiment within the range
+        common_years = None
+        for ce_result in ce_results_list:
+            exp_data_tmp = ce_result[exp_key]
+            years_in_range_tmp = set()
+            for y in exp_data_tmp['years_used']:
+                yi = int(y)
+                if year_start <= yi <= year_end:
+                    years_in_range_tmp.add(yi)
+            if common_years is None:
+                common_years = years_in_range_tmp
+            else:
+                common_years &= years_in_range_tmp
+        common_years = sorted(common_years) if common_years else []
 
-    #             # Gold distribution - convert to binary (target vs non-target)
-    #             d_gold = gold_dist[checkpoint].get(year_str, {tense: 0 for tense in available_tenses})
-    #             target_gold = d_gold.get(target_tense, 0)
-    #             non_target_gold = sum(d_gold.get(tense, 0) for tense in available_tenses if tense != target_tense)
-                
-    #             # Skip if no gold data
-    #             if target_gold + non_target_gold == 0:
-    #                 continue
-                    
-    #             gold_binary = torch.tensor([target_gold, non_target_gold], dtype=torch.float32)
+        if common_years:
+            fig2, ax2 = plt.subplots(figsize=(14, 8))
+            all_years_common = []
+            all_losses_common = []
 
-    #             # Distribution A - convert to binary
-    #             d_a = dist_a[checkpoint].get(year_str, {tense: 0 for tense in available_tenses})
-            #     s_a = sum(d_a.values())
-            #     if s_a == 0:
-            #         continue
-            #     target_a = d_a.get(target_tense, 0) / s_a
-            #     non_target_a = sum(d_a.get(tense, 0) for tense in available_tenses if tense != target_tense) / s_a
-            #     a_binary = torch.tensor([target_a, non_target_a], dtype=torch.float32)
+            for i, (ce_result, label) in enumerate(zip(ce_results_list, labels_list)):
+                exp_data = ce_result[exp_key]
+                losses_common = [exp_data['per_year_losses'][str(y)] for y in common_years if str(y) in exp_data['per_year_losses']]
+                if losses_common:
+                    color = CROSS_ENTROPY_COLORS[i % len(CROSS_ENTROPY_COLORS)]
+                    avg_common = sum(losses_common) / len(losses_common)
+                    ax2.scatter(common_years, losses_common,
+                                label=f"{label} (avg common: {avg_common:.4f}, n={len(losses_common)})",
+                                color=color, s=20, alpha=0.7)
+                    all_years_common.extend(common_years)
+                    all_losses_common.extend(losses_common)
 
-            #     # Distribution B - convert to binary
-            #     d_b = dist_b[checkpoint].get(year_str, {tense: 0 for tense in available_tenses})
-            #     s_b = sum(d_b.values())
-            #     if s_b == 0:
-            #         continue
-            #     target_b = d_b.get(target_tense, 0) / s_b
-            #     non_target_b = sum(d_b.get(tense, 0) for tense in available_tenses if tense != target_tense) / s_b
-            #     b_binary = torch.tensor([target_b, non_target_b], dtype=torch.float32)
+            # Format
+            ax2.set_xlabel('Year', fontsize=12)
+            ax2.set_ylabel('Cross-Entropy Loss', fontsize=12)
+            ax2.set_title(f"{model_name.upper()} - {exp_title} (Common Years Only)\nYears {year_start}-{year_end}", fontsize=14)
+            ax2.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+            ax2.grid(True, alpha=0.3)
 
-            #     # Binary CE (gold as target)
-            #     ce_a_binary.append(-(gold_binary * torch.log(a_binary + 1e-12)).sum().item())
-            #     ce_b_binary.append(-(gold_binary * torch.log(b_binary + 1e-12)).sum().item())
-            #     valid_years.append(year)
+            # Axis limits based on common data
+            if all_years_common and all_losses_common:
+                ax2.set_xlim(year_start - 5, year_end + 5)
+                y_min_c, y_max_c = min(all_losses_common), max(all_losses_common)
+                y_range_c = y_max_c - y_min_c
+                y_pad_c = max(0.05 * y_range_c, 0.1)
+                ax2.set_ylim(max(0, y_min_c - y_pad_c), y_max_c + y_pad_c)
 
-            # # Plot binary CE for this tense
-            # if valid_years:
-            #     plt.figure(figsize=(12, 5))
-            #     plt.plot(valid_years, ce_a_binary, marker='o', color="orange", label=f"{labels[0]} ({target_tense} vs non-{target_tense})")
-            #     plt.plot(valid_years, ce_b_binary, marker='o', color="blue", label=f"{labels[1]} ({target_tense} vs non-{target_tense})")
-            #     plt.xlabel("Year")
-            #     plt.ylabel(f"Binary Cross-Entropy Loss ({target_tense} vs non-{target_tense})")
-            #     plt.title(f"Binary CE Loss per Year | {target_tense} vs non-{target_tense} | Checkpoint {checkpoint} | Cutoff {cutoff_yr}")
-            #     plt.legend()
-            #     plt.grid(True)
-
-            #     Path(output_dir).mkdir(parents=True, exist_ok=True)
-            #     plt.tight_layout()
-            #     filename = f"{output_dir}/binary_ce_{target_tense}_vs_non_{target_tense}_ckpt{checkpoint}_cutoff{cutoff_yr}.png"
-            #     plt.savefig(filename, dpi=300)
-            #     plt.close()
+            # Save common-years-only plot
+            filename_common = f"{model_name}_cross_entropy_{exp_name}_common_{year_start}_{year_end}.png"
+            save_path_common = Path(output_dir) / filename_common
+            plt.tight_layout()
+            plt.savefig(save_path_common, dpi=600, bbox_inches='tight')
+            plt.close()
+            print(f"Saved: {save_path_common}")
+        else:
+            print("No common years across distributions within the selected range; skipping common-years plot.")
 
 
 
-#########################################################################################
-# EXPERIMENTAL FUNCTIONS. Each one of these runs a specific experiment.
-#########################################################################################
 
 def plot_model_predictions():
     analyzer = AnalyzerClass()
@@ -936,173 +681,15 @@ def plot_training_data():
 def compute_cross_entropies():
     analyzer = AnalyzerClass()
     cp = 10000
-    print("olmo predictions")
     olmo_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_predictions, "olmo", cp, 1950, 2050)
-    # print(olmo_predictions_ce)
-    print("olmo string match")
     olmo_string_match_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", cp, 1950, 2050)
-    # print(olmo_string_match_ce)
-    print("olmo co occurrence")
     olmo_co_occurrence_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", cp, 1950, 2050)
-    # print(olmo_co_occurrence_ce)
-    print("pythia predictions")
+    plot_cross_entropies([olmo_predictions_ce, olmo_string_match_ce, olmo_co_occurrence_ce], ["olmo predictions", "olmo string match", "olmo co occurrence"], "olmo")
+
     pythia_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_predictions, "pythia", cp, 1950, 2050)
-    # print(pythia_predictions_ce)
-    print("pythia string match")
     pythia_string_match_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", cp, 1950, 2050)
-    # print(pythia_string_match_ce)
-    print("pythia co occurrence")
     pythia_co_occurrence_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", cp, 1950, 2050)
-    # print(pythia_co_occurrence_ce)
-
-    # plot_cross_entropies()
-
-    """
-    return {
-            'per_year_losses': per_year_losses,
-            'average_loss': average_loss,
-            'years_used': years_used,
-            'years_skipped': years_skipped,
-        }
-    """
-
-
-
-
-
-# def plot_distribution():
-
-#     analyzer = AnalyzerClass(TENSE_MAPPING, year_range=(1950, 2050))
-#     checkpoints = [10000]
-#     # analyzer.plot_single_distribution_stacked(analyzer.relative_model_data, checkpoints, label="Model predictions") # plot_width=30)
-#     # analyzer.plot_single_distribution_stacked(analyzer.relative_human_gold, checkpoints, label="Gold distribution") #, plot_width=30)
-#     analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence")
-#     analyzer.plot_single_distribution_stacked(analyzer.relative_training_data["string_match_cooccur"], checkpoints, label="\'In [year]\' and [tense] cooccurence", plot_width=30)
-
-
-
-# def run_ce_loss():
-
-#     analyser = AnalyzerClass(TENSE_MAPPING, year_range=(1950, 2050))
-
-#     for cutoff_yr in [2015, 2016, 2017, 2023, 2024, 2025]:
-#         print(f"cutoff_year = {cutoff_yr}")
-#         analyser.populate_gold_data(cutoff_yr)
-
-#         # print("Training snapshot, string cooccur:", list(analyser.relative_training_data["string_match_cooccur"][10000].items())[:5])
-#         analyser.compute_ce_loss_single(analyser.relative_training_data["string_match_cooccur"], checkpoint=10000, label=f"\'In [year]\' and [tense] cooccurence, cutoff_year={cutoff_yr}")
-
-#         # print("Training snapshot, string match:", list(analyser.relative_training_data["exact_str_matching"][10000].items())[:5])
-#         # analyser.compute_ce_loss_single(analyser.relative_training_data["exact_str_matching"], checkpoint=10000, label="training exact_str_matching")
-
-#         # print("Model snapshot:", list(analyser.relative_model_data[10000].items())[:5])
-#         analyser.compute_ce_loss_single(analyser.relative_model_data, checkpoint=10000, label=f"model, cutoff_year={cutoff_yr}")
-    
-#     # example results for 1800-2200:
-#     # Training snapshot: [('1800', {'past': 0.9709270433351618, 'future': 0.029072956664838178}), ('1801', {'past': 0.9863782051282052, 'future': 0.013621794871794872}), ('1802', {'past': 0.9871858058156727, 'future': 0.012814194184327254}), ('1803', {'past': 0.9840881272949816, 'future': 0.01591187270501836}), ('1804', {'past': 0.9807534807534808, 'future': 0.019246519246519246})]
-#     # training string_match_cooccur | Checkpoint 10000 | CE Loss: 1.9600
-#     # Model snapshot: [('1800', {'past': 0.9996292106130621, 'future': 0.0003707893869378904}), ('1801', {'past': 0.998573632179892, 'future': 0.0014263678201079208}), ('1802', {'past': 0.9988521106383594, 'future': 0.0011478893616405149}), ('1803', {'past': 0.9984965393050429, 'future': 0.0015034606949570943}), ('1804', {'past': 0.9987147562745495, 'future': 0.0012852437254504427})]
-#     # model | Checkpoint 10000 | CE Loss: 1.0092
-
-# def run_ce_loss_over_years():
-#     # Create a complete tense mapping for binary analysis
-#     complete_tense_mapping = {
-#         "was": "past",
-#         "were": "past",
-#         "is": "present", 
-#         "are": "present",
-#         "will": "future",
-#     }
-        
-#     analyser = AnalyzerClass(complete_tense_mapping, year_range=(1950, 2050))
-    
-#     cutoff_yr = 2024
-#     print(f"cutoff_year = {cutoff_yr}")
-#     analyser.populate_gold_data(cutoff_yr)
-    
-#     # Plot binary CE losses for each tense vs non-tense
-#     analyser.plot_binary_ce_vs_gold(
-#         analyser.relative_model_data, 
-#         analyser.relative_training_data["string_match_cooccur"], 
-#         analyser.relative_human_gold, 
-#         10000, 
-#         cutoff_yr,
-#         labels=("Model predictions", "\'In [year]\' and [tense] cooccurence")
-#     )
-
-
-
-# def run_training_dynamics_spearman():
-
-#     # be careful to specify start years within the year range the plotting just errors out and gives 0's instead if you dont.
-#     year_range=(1950, 2050)
-#     analyser = AnalyzerClass(TENSE_MAPPING, year_range=year_range)
-
-#     # RANK CORRELATION
-#     analyser.plot_spearman_over_checkpoints(
-#         analyser.relative_model_data,
-#         analyser.relative_human_gold,
-#         window_size=20,
-#         start_years=range(year_range[0]+10, year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
-#         label1="Model predictions",
-#         label2="Gold distribution"
-#     )  
-
-#     analyser.plot_spearman_over_checkpoints(
-#         analyser.relative_model_data,
-#         analyser.relative_training_data["string_match_cooccur"],
-#         window_size=20,
-#         start_years=range(year_range[0]+10, year_range[1], 20), # every 20 yr increment in range, leaving 20 at the end for the window
-#         label1="Model predictions",
-#         label2="\'In [year]\' and [tense] cooccurence"
-#     )  
-
-# def run_training_dynamics_ce():
-#     year_range=(1950, 2050)
-#     analyser = AnalyzerClass(TENSE_MAPPING, year_range=year_range)
-
-#     # CROSS ENTROPY
-#     # data1 is my "TRUE" distr, the gold. and data2 is the "MEASURED distr like model or training data.
-
-#     analyser.plot_avg_ce_over_checkpoints(
-#         analyser.relative_human_gold,
-#         analyser.relative_model_data,
-#         window_size=1,
-#         start_years=range(year_range[0], year_range[1], 1), # every 20 yr increment in range, leaving 20 at the end for the window
-#         label1="Gold distribution",
-#         label2="Model prediction",
-#     )  
-
-#     analyser.plot_avg_ce_over_checkpoints(
-#         analyser.relative_human_gold,
-#         analyser.relative_training_data["string_match_cooccur"],
-#         window_size=1,
-#         start_years=range(year_range[0], year_range[1]), # every 20 yr increment in range, leaving 20 at the end for the window
-#         label1="Gold distribution",
-#         label2="\'In [year]\' and [tense] cooccurence",
-#     )  
-
-#     # analyser.plot_avg_ce_past_future_checkpoints(
-#     #     analyser.relative_human_gold,
-#     #     analyser.relative_model_data,
-#     #     window_size=1,
-#     #     start_years=range(year_range[0], year_range[1]), # every 20 yr increment in range, leaving 20 at the end for the window
-#     #     label1="Gold distribution",
-#     #     label2="Model prediction",
-#     # )  
-
-
-
-# def run_training_dynamic_output():
-#     year_range=(1950, 2050)
-#     analyser = AnalyzerClass(TENSE_MAPPING, year_range=year_range)
-
-#     cps = [i for i in range(250, 10001, 250)]
-#     analyser.plot_stacked_grid_over_checkpoints(analyser.relative_model_data, cps, label="Model predictions")
-#     analyser.plot_stacked_grid_over_checkpoints(analyser.relative_training_data["string_match_cooccur"], cps, label="\'In [year]\' and [tense] cooccurence")
-
-####################################################################################################################################################################################
-
+    plot_cross_entropies([pythia_predictions_ce, pythia_string_match_ce, pythia_co_occurrence_ce], ["pythia predictions", "pythia string match", "pythia co occurrence"], "pythia")
 
 
 def save_all_analyzer_data():
@@ -1117,7 +704,7 @@ def save_all_analyzer_data():
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
     
-    plot_training_data()
-    plot_model_predictions()
-    save_all_analyzer_data()
+    # plot_training_data()
+    # plot_model_predictions()
+    # save_all_analyzer_data()
     compute_cross_entropies()
