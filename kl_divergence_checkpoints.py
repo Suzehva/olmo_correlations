@@ -427,7 +427,8 @@ class AnalyzerClass:
         
         # Format
         title = f"{data_type} | Checkpoint {checkpoint} | Years {year_start}-{year_end}"
-        filename = f"{model}_checkpoint{checkpoint}_{data_type}"
+        safe_data_type = data_type.replace(' ', '_')
+        filename = f"{model}_checkpoint{checkpoint}_{safe_data_type}_{year_start}-{year_end}"
         
         ax.set_title(title)
         ax.set_xticks(range(0, len(years), max(1, len(years)//20)))
@@ -444,6 +445,97 @@ class AnalyzerClass:
         save_path = Path(output_dir) / f"{filename}.png"
         plt.tight_layout()
         plt.savefig(save_path, dpi=600)
+        plt.close()
+        print(f"Saved: {save_path}")
+
+        
+    def bar_plots_for_checkpoints(self, dist_dict, model, data_type, checkpoints, rows, cols, year_start, year_end):
+        """
+        Create a grid of stacked bar plots, one subplot per checkpoint.
+
+        Args:
+            dist_dict: Dictionary containing distribution data (keyed by checkpoint -> year -> tense -> prob)
+            model: Model name (str)
+            data_type: Type of data being plotted (str)
+            checkpoints: List of checkpoint integers to plot
+            rows: Number of rows in the subplot grid
+            cols: Number of columns in the subplot grid
+            year_start: Start year (inclusive)
+            year_end: End year (inclusive)
+            output_filename: Optional filename to save the combined figure
+        """
+        if len(checkpoints) > rows * cols:
+            raise ValueError(f"Too many checkpoints ({len(checkpoints)}) for grid size {rows}×{cols}")
+
+        fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))
+        if rows == 1 and cols == 1:
+            axes = [axes]
+        else:
+            axes = axes.flatten()
+
+        tenses = [t for t in TENSE_ORDER if t in set(TENSE_MAPPING.values())]
+
+        for idx, cp in enumerate(checkpoints):
+            ax = axes[idx]
+
+            if cp not in dist_dict:
+                ax.text(0.5, 0.5, f"Checkpoint {cp} not found", ha='center', va='center', transform=ax.transAxes, fontsize=10)
+                ax.set_title(f"Checkpoint {cp}")
+                ax.grid(True, alpha=0.3)
+                continue
+
+            cp_data = dist_dict[cp]
+            all_years = sorted(cp_data.keys())
+
+            # Filter years based on year_start and year_end
+            filtered_years = []
+            for year_str in all_years:
+                year = int(year_str)
+                if year < year_start or year > year_end:
+                    continue
+                filtered_years.append(year_str)
+            years = filtered_years
+
+            bottom = np.zeros(len(years))
+            for tense in tenses:
+                vals = np.array([cp_data[y].get(tense, 0) for y in years])
+                ax.bar(range(len(years)), vals, bottom=bottom,
+                       label=tense.title() if idx == 0 else "",
+                       color=TENSE_COLORS[tense], width=1.0)
+                bottom += vals
+
+            # Format subplot
+            ax.set_title(f"{data_type} | Checkpoint {cp}", fontsize=10)
+            tick_step = max(1, len(years) // 20)
+            ax.set_xticks(range(0, len(years), tick_step))
+            ax.set_xticklabels(years[::tick_step], rotation=45, fontsize=9)
+            if idx % cols == 0:
+                ax.set_ylabel("Probability")
+            ax.set_ylim(0, 1)
+            ax.set_xlim(-0.5, len(years) - 0.5)
+            ax.margins(0)
+            ax.grid(True, alpha=0.3)
+
+        # Hide any unused subplots
+        for idx in range(len(checkpoints), len(axes)):
+            axes[idx].set_visible(False)
+
+        # Add a single legend for the whole figure
+        fig.legend([t.title() for t in tenses], loc='upper center', bbox_to_anchor=(0.5, 0.02), ncol=len(tenses), fontsize=12)
+
+        plt.tight_layout()
+        plt.subplots_adjust(bottom=0.12)
+
+        # Save combined figure
+        year_range = f"{year_start}-{year_end}"
+        cps_str = f"{len(checkpoints)}cps"
+        safe_data_type = data_type.replace(' ', '_')
+        output_filename = f"{model}_{safe_data_type}_{cps_str}_{rows}x{cols}_{year_range}.png"
+
+        output_dir = "checkpoint_bar_plots"
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        save_path = Path(output_dir) / output_filename
+        plt.savefig(save_path, dpi=600, bbox_inches='tight')
         plt.close()
         print(f"Saved: {save_path}")
 
@@ -701,10 +793,29 @@ def save_all_analyzer_data():
     print(f"Data export completed. File saved: {filepath}")
     return filepath
 
+def plot_training_dynamics():
+    analyzer = AnalyzerClass()
+    # for appendix
+    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_predictions, "olmo", "Next-token Predictions", [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500, 7750, 8000, 8250, 8500, 8750, 9000, 9250, 9500, 9750, 10000], 8, 5, 1950, 2050)
+    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, 1950, 2050)
+    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", "in_year_there_word_counts", [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, 1950, 2050)
+    
+    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_predictions, "pythia", "Next-token Predictions", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, 1950, 2050)
+    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", "in_year_tense_sentence_counts", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, 1950, 2050)
+    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", "in_year_there_word_counts", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, 1950, 2050)
+    
+
+    # for main section
+    analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_predictions, "olmo", "Next-token Predictions", [1000, 3000, 7000], 1, 3, 1950, 2050)
+    analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_predictions, "pythia", "Next-token Predictions", [1000, 3000, 7000], 1, 3, 1950, 2050)
+    
+    
+
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
     
     # plot_training_data()
     # plot_model_predictions()
     # save_all_analyzer_data()
-    compute_cross_entropies()
+    # compute_cross_entropies()
+    # plot_training_dynamics()
