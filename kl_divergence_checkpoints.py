@@ -8,7 +8,7 @@ from scipy.stats import spearmanr
 import torch.nn.functional as F
 from matplotlib.lines import Line2D
 from datetime import datetime
-
+from fractions import Fraction
 
 PYTHIA_PREDICTIONS_FILE = "../olmo_predictions/model_predictions__In__year__there/EleutherAI_pythia-1.4b-deduped_rev_step{cp}/pythia-1.4b-deduped_rev_step{cp}_predictions.json"
 OLMO_PREDICTIONS_FILE = "../olmo_predictions/output_checkpoints_olmo/checkpoint_{cp}.json" # this is the 2nd try model
@@ -57,6 +57,22 @@ class AnalyzerClass:
         self.populate_gold_data(olmo_cutoff=2024, pythia_cutoff=2020)
         print("finished loading all data")
     
+
+
+    def _normalize_tense_distribution(self, tense_counts):
+        all_tenses = list(set(TENSE_MAPPING.values()))
+        complete_counts = {tense: tense_counts.get(tense, 0.0) for tense in all_tenses}
+        
+        total = sum(complete_counts.values())
+        if total == 0:
+            return {tense: 0.0 for tense in all_tenses}
+        
+        normalized = {tense: count / total for tense, count in complete_counts.items()}
+        
+        return normalized
+
+
+
     def save_all_data_to_file(self, filepath="analyzer_data.json"):
         """
         Save all analyzer data to a single JSON file.
@@ -89,6 +105,88 @@ class AnalyzerClass:
         
         print(f"All data saved to: {filepath}")
         return filepath
+
+    def compute_cross_entropy_over_range(self, dist_dict, which_model, checkpoint, year_start, year_end):
+        def compute_losses(pred_dist, gold_dist): 
+            # Normalize distributions if needed
+            assert abs(sum(pred_dist) - 1) < 1e-6, f"pred_dist should sum to approximately 1, got {sum(pred_dist)} for model {which_model} at checkpoint {checkpoint} and year {year_str}"
+            assert abs(sum(gold_dist) - 1) < 1e-6
+            assert len(pred_dist) == 2
+            
+            # Compute cross-entropy: -sum(target * log(pred))
+            ce_loss = - gold_dist[0] * np.log(pred_dist[0]) - gold_dist[1] * np.log(pred_dist[1])
+            return ce_loss
+
+        # Get data for the specified checkpoint
+        dist_cp = dist_dict[checkpoint]
+        if which_model == "olmo":
+            gold_cp = self.olmo_gold_distribution[checkpoint]
+        elif which_model == "pythia":
+            gold_cp = self.pythia_gold_distribution[checkpoint]
+        else:
+            raise ValueError(f"Invalid model: {which_model}")
+        
+        # Separate storage for each experiment
+        experiment1_losses = {}  # present + future combined
+        experiment2_losses = {}  # only past vs future
+        years_used_exp1 = []
+        years_used_exp2 = []
+        years_skipped = []
+        
+        for year in range(year_start, year_end + 1):
+            year_str = str(year)
+            dist_data = dist_cp[year_str]
+            if sum(dist_data.values()) == 0:
+                years_skipped.append(year_str)
+                print(f"no data for {year_str} in {which_model} at checkpoint {checkpoint}")
+                continue
+            assert abs(sum(dist_data.values()) - 1) < 1e-6, f"dist_data should sum to 1, got {sum(dist_data.values())}"
+            gold_data = gold_cp[year_str]
+            assert abs(sum(gold_data.values()) - 1) < 1e-6, f"gold_data should sum to 1, got {sum(gold_data.values())}"
+            gold_dist = [gold_data["past"], gold_data["future"]]
+            
+            # experiment 1: combine present and future tense
+            pred_dist = [dist_data["past"], dist_data["present"] + dist_data["future"]]
+            if sum(pred_dist) == 0:
+                years_skipped.append(year_str)
+                print(f"no data for {year_str} in {which_model} at checkpoint {checkpoint}")
+                continue    
+            ce_loss = compute_losses(pred_dist, gold_dist)
+            if ce_loss is not None:
+                experiment1_losses[year_str] = ce_loss
+                years_used_exp1.append(year_str)
+            
+            # experiment 2: disregard present tense
+            pred_dist_sum = dist_data["past"] + dist_data["future"]
+            if pred_dist_sum == 0:
+                years_skipped.append(year_str)
+                print(f"no data for {year_str} in {which_model} at checkpoint {checkpoint}")
+                continue
+            pred_dist = [dist_data["past"] / pred_dist_sum, dist_data["future"] / pred_dist_sum]
+            ce_loss = compute_losses(pred_dist, gold_dist)
+            if ce_loss is not None:
+                experiment2_losses[year_str] = ce_loss
+                years_used_exp2.append(year_str)
+
+        # Compute average losses for each experiment
+        avg_loss_exp1 = sum(experiment1_losses.values()) / len(experiment1_losses) if experiment1_losses else float('inf')
+        avg_loss_exp2 = sum(experiment2_losses.values()) / len(experiment2_losses) if experiment2_losses else float('inf')
+        
+        return {
+            'experiment1_past_vs_present_future': {
+                'per_year_losses': experiment1_losses,
+                'average_loss': avg_loss_exp1,
+                'years_used': years_used_exp1,
+                'description': 'Binary classification: past vs (present + future)'
+            },
+            'experiment2_past_vs_future': {
+                'per_year_losses': experiment2_losses,
+                'average_loss': avg_loss_exp2,
+                'years_used': years_used_exp2,
+                'description': 'Binary classification: past vs future (ignoring present)'
+            },
+            'years_skipped': years_skipped,
+        }
 
     def _get_folder_name(self, model, checkpoint, data_type):
         """
@@ -127,6 +225,14 @@ class AnalyzerClass:
 
                 year_to_counts_absolute = {}
                 year_to_counts_relative = {}
+                
+                # First, ensure all years in TOTAL_YEARS range are present with empty dicts
+                for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1]):
+                    year_str = str(year)
+                    year_to_counts_absolute[year_str] = {}
+                    year_to_counts_relative[year_str] = {tense: 0.0 for tense in set(TENSE_MAPPING.values())}
+                
+                # Then process the actual data
                 for year, counts in data[data_source].items():
                     # Group by tense categories
                     tense_counts_absolute = {}
@@ -135,12 +241,8 @@ class AnalyzerClass:
                             tense_counts_absolute.setdefault(tense, 0)
                             tense_counts_absolute[tense] += counts[verb]
                     
-                    total_absolute_counts = sum(tense_counts_absolute.values())
-                    
-                    if total_absolute_counts > 0:
-                        tense_counts_relative = {tense: count/total_absolute_counts for tense, count in tense_counts_absolute.items()}
-                    else:
-                        tense_counts_relative = {tense: 0.0 for tense in set(TENSE_MAPPING.values())}
+                    # Use the normalization helper for accurate normalization
+                    tense_counts_relative = self._normalize_tense_distribution(tense_counts_absolute)
                     
                     year_to_counts_absolute[year] = tense_counts_absolute
                     year_to_counts_relative[year] = tense_counts_relative
@@ -164,11 +266,8 @@ class AnalyzerClass:
                     tense_counts_absolute.setdefault(tense, 0)
                     tense_counts_absolute[tense] += verb_count_dict[verb]
             
-            total_absolute_counts = sum(tense_counts_absolute.values())
-            if total_absolute_counts > 0:
-                tense_counts_relative = {tense: count / total_absolute_counts for tense, count in tense_counts_absolute.items()}
-            else:
-                tense_counts_relative = {tense: 0.0 for tense in set(TENSE_MAPPING.values())}
+            # Use the normalization helper for accurate normalization
+            tense_counts_relative = self._normalize_tense_distribution(tense_counts_absolute)
         
             return tense_counts_absolute, tense_counts_relative
             
@@ -185,6 +284,14 @@ class AnalyzerClass:
                 
                 year_to_counts_absolute = {}
                 year_to_counts_relative = {}
+                
+                # First, ensure all years in TOTAL_YEARS range are present with empty dicts
+                for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1]):
+                    year_str = str(year)
+                    year_to_counts_absolute[year_str] = {}
+                    year_to_counts_relative[year_str] = {tense: 0.0 for tense in set(TENSE_MAPPING.values())}
+                
+                # Then process the actual data
                 if file_template == OLMO_PREDICTIONS_FILE:
                     for year, verb_count_dict in data["data"].items():
                         year_to_counts_absolute[year], year_to_counts_relative[year] = divide_into_tenses(year, verb_count_dict)
@@ -826,6 +933,42 @@ def plot_training_data():
     analyzer.bar_plot(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", "in_year_tense_sentence_counts", 10000, 1950, 2050)
     analyzer.bar_plot(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", "in_year_there_word_counts", 10000, 1950, 2050)
     
+def compute_cross_entropies():
+    analyzer = AnalyzerClass()
+    cp = 10000
+    print("olmo predictions")
+    olmo_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_predictions, "olmo", cp, 1950, 2050)
+    # print(olmo_predictions_ce)
+    print("olmo string match")
+    olmo_string_match_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", cp, 1950, 2050)
+    # print(olmo_string_match_ce)
+    print("olmo co occurrence")
+    olmo_co_occurrence_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", cp, 1950, 2050)
+    # print(olmo_co_occurrence_ce)
+    print("pythia predictions")
+    pythia_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_predictions, "pythia", cp, 1950, 2050)
+    # print(pythia_predictions_ce)
+    print("pythia string match")
+    pythia_string_match_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", cp, 1950, 2050)
+    # print(pythia_string_match_ce)
+    print("pythia co occurrence")
+    pythia_co_occurrence_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", cp, 1950, 2050)
+    # print(pythia_co_occurrence_ce)
+
+    # plot_cross_entropies()
+
+    """
+    return {
+            'per_year_losses': per_year_losses,
+            'average_loss': average_loss,
+            'years_used': years_used,
+            'years_skipped': years_skipped,
+        }
+    """
+
+
+
+
 
 # def plot_distribution():
 
@@ -973,7 +1116,8 @@ def save_all_analyzer_data():
 
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
-
-    # plot_training_data()
-    # plot_model_predictions()
+    
+    plot_training_data()
+    plot_model_predictions()
     save_all_analyzer_data()
+    compute_cross_entropies()
