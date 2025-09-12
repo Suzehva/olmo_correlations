@@ -1013,7 +1013,7 @@ def plot_prediction_ce_prepost_over_checkpoints(model_name, year_start=None, yea
         plt.close()
         print(f"Saved: {save_path}")
 
-def ce_over_training_split()
+def ce_over_training_split():
     plot_prediction_ce_prepost_over_checkpoints("olmo", 1950, 2050)
     plot_prediction_ce_prepost_over_checkpoints("pythia", 1950, 2050)
 
@@ -1027,6 +1027,6 @@ if __name__ == "__main__":
     # compute_cross_entropies()
     # plot_training_dynamics()
     # ce_over_training()
-    ce_over_training_split()
+    # ce_over_training_split()
 
     
