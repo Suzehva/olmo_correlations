@@ -928,6 +928,13 @@ def ce_over_training():
     plot_cross_entropy_averages_over_checkpoints("olmo", 1950, 2050)
     plot_cross_entropy_averages_over_checkpoints("pythia", 1950, 2050)
 
+def ce_over_training_split():
+    # plot_prediction_ce_prepost_over_checkpoints("olmo", 1950, 2050)
+    # plot_prediction_ce_prepost_over_checkpoints("pythia", 1950, 2050)
+
+    plot_prediction_ce_all_years_over_checkpoints("olmo", 1950, 2050)
+    plot_prediction_ce_all_years_over_checkpoints("pythia", 1950, 2050)
+
 def plot_prediction_ce_prepost_over_checkpoints(model_name, year_start=None, year_end=None, output_dir="cross_entropy_predictions_prepost"):
     """Plot predictions-only average CE vs checkpoints, split pre/post cutoff.
 
@@ -1013,9 +1020,165 @@ def plot_prediction_ce_prepost_over_checkpoints(model_name, year_start=None, yea
         plt.close()
         print(f"Saved: {save_path}")
 
-def ce_over_training_split():
-    plot_prediction_ce_prepost_over_checkpoints("olmo", 1950, 2050)
-    plot_prediction_ce_prepost_over_checkpoints("pythia", 1950, 2050)
+def plot_prediction_ce_all_years_over_checkpoints(model_name, year_start=None, year_end=None, output_dir="cross_entropy_predictions_all_years"):
+    """Plot predictions-only CE per year across checkpoints with a gradient colorbar.
+
+    - One line per year (within [year_start, year_end]), colored by year using a continuous colormap.
+    - Separate figures for experiment1 and experiment2.
+    - No per-line legend; use a colorbar labeled 'Year'.
+    """
+    if year_start is None:
+        year_start = TOTAL_YEARS[0]
+    if year_end is None:
+        year_end = TOTAL_YEARS[1] - 1
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    analyzer = AnalyzerClass()
+
+    if model_name == "olmo":
+        dist_pred = analyzer.olmo_relative_predictions
+    elif model_name == "pythia":
+        dist_pred = analyzer.pythia_relative_predictions
+    else:
+        raise ValueError("model_name must be 'olmo' or 'pythia'")
+
+    checkpoints = sorted(dist_pred.keys())
+
+    experiments = ['experiment1_past_vs_present_future', 'experiment2_past_vs_future']
+    experiment_titles = [
+        'Binary Classification: Past vs (Present + Future)',
+        'Binary Classification: Past vs Future (ignoring Present)'
+    ]
+
+    # Color mapping from year to color via a colormap
+    cmap = plt.get_cmap('viridis')
+    norm = plt.Normalize(vmin=year_start, vmax=year_end)
+
+    for exp_key, exp_title in zip(experiments, experiment_titles):
+        # Build series per year
+        year_to_series = {y: {'x': [], 'y': []} for y in range(year_start, year_end + 1)}
+
+        for cp in checkpoints:
+            ce_pred = analyzer.compute_cross_entropy_over_range(dist_pred, model_name, cp, year_start, year_end)
+            exp_data = ce_pred[exp_key]
+            for y_str, loss in exp_data['per_year_losses'].items():
+                yi = int(y_str)
+                if year_start <= yi <= year_end:
+                    year_to_series[yi]['x'].append(cp)
+                    year_to_series[yi]['y'].append(loss)
+
+        # Plot
+        fig, ax = plt.subplots(figsize=(12, 8))
+        all_vals = []
+
+        for yi in range(year_start, year_end + 1):
+            xs = year_to_series[yi]['x']
+            ys = year_to_series[yi]['y']
+            if not xs:
+                continue
+            color = cmap(norm(yi))
+            ax.plot(xs, ys, color=color, linewidth=1.2)
+            all_vals.extend(ys)
+
+        ax.set_xlabel("Checkpoint", fontsize=12)
+        ax.set_ylabel("Cross-Entropy", fontsize=12)
+        ax.set_title(f"{model_name.upper()} - {exp_title}\nPer-year CE across checkpoints ({year_start}-{year_end})", fontsize=14)
+        ax.grid(True, alpha=0.3)
+
+        # Add colorbar indicating year
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+        sm.set_array([])
+        cbar = plt.colorbar(sm, ax=ax)
+        cbar.set_label('Year')
+
+        # y-limits based on data
+        if all_vals:
+            y_min, y_max = min(all_vals), max(all_vals)
+            y_range = y_max - y_min
+            y_pad = max(0.05 * y_range, 0.05)
+            ax.set_ylim(max(0, y_min - y_pad), y_max + y_pad)
+
+        plt.tight_layout()
+        exp_name = exp_key.replace('experiment1_', '').replace('experiment2_', '')
+        fname = f"{model_name}_predictions_ce_by_year_{exp_name}_{year_start}_{year_end}.png"
+        save_path = Path(output_dir) / fname
+        plt.savefig(save_path, dpi=600, bbox_inches='tight')
+        plt.close()
+        print(f"Saved: {save_path}")
+
+def plot_prediction_ce_averages_over_checkpoints(model_name, checkpoints, year_start=1950, year_end=2050, output_dir="cross_entropy_prediction_avgs"):
+    """Plot predictions-only average CE vs specified checkpoints.
+
+    - Uses only model predictions (no training data) over [year_start, year_end].
+    - Creates separate figures for experiment1 and experiment2.
+    - Plots a single line with dot markers for the provided checkpoints.
+    """
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    analyzer = AnalyzerClass()
+
+    if model_name == "olmo":
+        dist_pred = analyzer.olmo_relative_predictions
+    elif model_name == "pythia":
+        dist_pred = analyzer.pythia_relative_predictions
+    else:
+        raise ValueError("model_name must be 'olmo' or 'pythia'")
+
+    # Keep only checkpoints present in predictions
+    available_cps = set(dist_pred.keys())
+    cps = [cp for cp in checkpoints if cp in available_cps]
+    for cp in checkpoints:
+        if cp not in available_cps:
+            print(f"Skipping checkpoint {cp}: not found in predictions for {model_name}")
+
+    if not cps:
+        print("No valid checkpoints to plot.")
+        return
+
+    experiments = ['experiment1_past_vs_present_future', 'experiment2_past_vs_future']
+    experiment_titles = [
+        'Binary Classification: Past vs (Present + Future)',
+        'Binary Classification: Past vs Future (ignoring Present)'
+    ]
+
+    for exp_key, exp_title in zip(experiments, experiment_titles):
+        x_cps = []
+        avgs = []
+
+        for cp in cps:
+            ce_pred = analyzer.compute_cross_entropy_over_range(dist_pred, model_name, cp, year_start, year_end)
+            avg_loss = float(ce_pred[exp_key]['average_loss'])
+            x_cps.append(cp)
+            avgs.append(avg_loss)
+
+        if not x_cps:
+            print(f"No data to plot for {model_name} {exp_key}")
+            continue
+
+        fig, ax = plt.subplots(figsize=(12, 7))
+        color = CROSS_ENTROPY_COLORS[0]
+        ax.plot(x_cps, avgs, color=color, linestyle='-', marker='.', markersize=8, label="predictions")
+
+        ax.set_xlabel("Checkpoint", fontsize=12)
+        ax.set_ylabel("Average Cross-Entropy", fontsize=12)
+        ax.set_title(f"{model_name.upper()} - {exp_title}\nYears {year_start}-{year_end}", fontsize=14)
+        ax.grid(True, alpha=0.3)
+        ax.legend(loc='upper right')
+
+        y_min, y_max = min(avgs), max(avgs)
+        y_range = y_max - y_min
+        y_pad = max(0.05 * y_range, 0.05)
+        ax.set_ylim(max(0, y_min - y_pad), y_max + y_pad)
+
+        plt.tight_layout()
+        exp_name = exp_key.replace('experiment1_', '').replace('experiment2_', '')
+        cps_str = f"{len(x_cps)}cps"
+        fname = f"{model_name}_predictions_avg_ce_vs_checkpoint_{exp_name}_{year_start}_{year_end}_{cps_str}.png"
+        save_path = Path(output_dir) / fname
+        plt.savefig(save_path, dpi=600, bbox_inches='tight')
+        plt.close()
+        print(f"Saved: {save_path}")
 
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
@@ -1027,6 +1190,8 @@ if __name__ == "__main__":
     # compute_cross_entropies()
     # plot_training_dynamics()
     # ce_over_training()
-    # ce_over_training_split()
+    ce_over_training_split()
+
+    
 
     
