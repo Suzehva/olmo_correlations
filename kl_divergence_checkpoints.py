@@ -817,16 +817,22 @@ def plot_cross_entropy_averages_over_checkpoints(model_name, year_start=1950, ye
             ce_sm   = analyzer.compute_cross_entropy_over_range(dist_sm,   model_name, cp, year_start, year_end)
             ce_co   = analyzer.compute_cross_entropy_over_range(dist_co,   model_name, cp, year_start, year_end)
 
-            # Full averages (over own years within range)
-            full_avgs["predictions"].append(_avg_all_years(ce_pred[exp_key]))
-            full_avgs["string match"].append(_avg_all_years(ce_sm[exp_key]))
-            full_avgs["co occurrence"].append(_avg_all_years(ce_co[exp_key]))
+            # Find common years across all three distributions for this checkpoint
+            pred_years = set(int(y) for y in ce_pred[exp_key]['years_used'] if year_start <= int(y) <= year_end)
+            sm_years = set(int(y) for y in ce_sm[exp_key]['years_used'] if year_start <= int(y) <= year_end)
+            co_years = set(int(y) for y in ce_co[exp_key]['years_used'] if year_start <= int(y) <= year_end)
+            common_years = sorted(pred_years & sm_years & co_years)
+
+            # Compute averages over common years only
+            full_avgs["predictions"].append(_avg_specific_years(ce_pred[exp_key], common_years))
+            full_avgs["string match"].append(_avg_specific_years(ce_sm[exp_key], common_years))
+            full_avgs["co occurrence"].append(_avg_specific_years(ce_co[exp_key], common_years))
 
             # String-match restricted averages
-            sm_years = [int(y) for y in ce_sm[exp_key]['years_used'] if year_start <= int(y) <= year_end]
-            sm_avgs["predictions"].append(_avg_specific_years(ce_pred[exp_key], sm_years))
-            sm_avgs["string match"].append(_avg_specific_years(ce_sm[exp_key], sm_years))
-            sm_avgs["co occurrence"].append(_avg_specific_years(ce_co[exp_key], sm_years))
+            sm_years_list = [int(y) for y in ce_sm[exp_key]['years_used'] if year_start <= int(y) <= year_end]
+            sm_avgs["predictions"].append(_avg_specific_years(ce_pred[exp_key], sm_years_list))
+            sm_avgs["string match"].append(_avg_specific_years(ce_sm[exp_key], sm_years_list))
+            sm_avgs["co occurrence"].append(_avg_specific_years(ce_co[exp_key], sm_years_list))
 
             x_cps.append(cp)
 
@@ -922,6 +928,95 @@ def ce_over_training():
     plot_cross_entropy_averages_over_checkpoints("olmo", 1950, 2050)
     plot_cross_entropy_averages_over_checkpoints("pythia", 1950, 2050)
 
+def plot_prediction_ce_prepost_over_checkpoints(model_name, year_start=None, year_end=None, output_dir="cross_entropy_predictions_prepost"):
+    """Plot predictions-only average CE vs checkpoints, split pre/post cutoff.
+
+    Uses all available years by default (TOTAL_YEARS). Creates separate figures for
+    experiment1 (past vs present+future) and experiment2 (past vs future).
+    """
+    if year_start is None:
+        year_start = TOTAL_YEARS[0]
+    if year_end is None:
+        year_end = TOTAL_YEARS[1] - 1
+
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    analyzer = AnalyzerClass()
+
+    if model_name == "olmo":
+        dist_pred = analyzer.olmo_relative_predictions
+        cutoff = OLMO_CUTOFF
+    elif model_name == "pythia":
+        dist_pred = analyzer.pythia_relative_predictions
+        cutoff = PYTHIA_CUTOFF
+    else:
+        raise ValueError("model_name must be 'olmo' or 'pythia'")
+
+    checkpoints = sorted(dist_pred.keys())
+
+    experiments = ['experiment1_past_vs_present_future', 'experiment2_past_vs_future']
+    experiment_titles = [
+        'Binary Classification: Past vs (Present + Future)',
+        'Binary Classification: Past vs Future (ignoring Present)'
+    ]
+
+    for exp_key, exp_title in zip(experiments, experiment_titles):
+        x_cps = []
+        pre_avgs = []  # years < cutoff
+        post_avgs = [] # years > cutoff
+
+        for cp in checkpoints:
+            ce_pred = analyzer.compute_cross_entropy_over_range(dist_pred, model_name, cp, year_start, year_end)
+            exp_data = ce_pred[exp_key]
+
+            years_int = [int(y) for y in exp_data['years_used'] if year_start <= int(y) <= year_end]
+            pre_years = [y for y in years_int if y < cutoff]
+            post_years = [y for y in years_int if y > cutoff]
+
+            if not pre_years or not post_years:
+                continue
+
+            pre_losses = [exp_data['per_year_losses'][str(y)] for y in pre_years]
+            post_losses = [exp_data['per_year_losses'][str(y)] for y in post_years]
+
+            pre_avgs.append(sum(pre_losses) / len(pre_losses))
+            post_avgs.append(sum(post_losses) / len(post_losses))
+            x_cps.append(cp)
+
+        if not x_cps:
+            print(f"No checkpoints with both pre- and post-cutoff years for {model_name} {exp_key}")
+            continue
+
+        fig, ax = plt.subplots(figsize=(12, 7))
+        color = CROSS_ENTROPY_COLORS[0]
+
+        ax.plot(x_cps, pre_avgs, color=color, linestyle='-', marker='.', markersize=8, label=f"predictions (< {cutoff})")
+        ax.plot(x_cps, post_avgs, color=color, linestyle='--', marker='.', markersize=8, label=f"predictions (> {cutoff})")
+
+        ax.set_xlabel("Checkpoint", fontsize=12)
+        ax.set_ylabel("Average Cross-Entropy", fontsize=12)
+        ax.set_title(f"{model_name.upper()} - {exp_title}\nAll years ({year_start}-{year_end}), split by cutoff {cutoff}", fontsize=14)
+        ax.grid(True, alpha=0.3)
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+
+        all_vals = pre_avgs + post_avgs
+        y_min, y_max = min(all_vals), max(all_vals)
+        y_range = y_max - y_min
+        y_pad = max(0.05 * y_range, 0.05)
+        ax.set_ylim(max(0, y_min - y_pad), y_max + y_pad)
+
+        plt.tight_layout()
+        exp_name = exp_key.replace('experiment1_', '').replace('experiment2_', '')
+        fname = f"{model_name}_predictions_avg_ce_prepost_{exp_name}_{year_start}_{year_end}.png"
+        save_path = Path(output_dir) / fname
+        plt.savefig(save_path, dpi=600, bbox_inches='tight')
+        plt.close()
+        print(f"Saved: {save_path}")
+
+def ce_over_training_split()
+    plot_prediction_ce_prepost_over_checkpoints("olmo", 1950, 2050)
+    plot_prediction_ce_prepost_over_checkpoints("pythia", 1950, 2050)
+
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
     
@@ -931,4 +1026,7 @@ if __name__ == "__main__":
     # save_all_analyzer_data()
     # compute_cross_entropies()
     # plot_training_dynamics()
-    ce_over_training()
+    # ce_over_training()
+    ce_over_training_split()
+
+    
