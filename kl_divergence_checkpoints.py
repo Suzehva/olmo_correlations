@@ -694,7 +694,7 @@ def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=19
         plt.savefig(save_path, dpi=600, bbox_inches='tight')
         plt.close()
         print(f"Saved: {save_path}")
-
+        
         # --- Additional figure: plot only years where ALL distributions have data (fair comparison) ---
         # Compute intersection of years across all distributions for this experiment within the range
         common_years = None
@@ -754,6 +754,114 @@ def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=19
             print("No common years across distributions within the selected range; skipping common-years plot.")
 
 
+def plot_cross_entropy_averages_over_checkpoints(model_name, year_start=1950, year_end=2050, output_dir="cross_entropy_across_checkpoints"):
+    """Plot average cross-entropy vs checkpoints.
+
+    For each checkpoint, compute the average CE over (a) all available years
+    within [year_start, year_end] for each distribution and (b) the same CE
+    but restricted to the years used by the string-match distribution.
+
+    Produces separate figures for the two experiments and reuses the same
+    colors per distribution with different linestyles for the two averaging modes.
+    """
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+
+    analyzer = AnalyzerClass()
+
+    if model_name == "olmo":
+        dist_pred = analyzer.olmo_relative_predictions
+        dist_sm = analyzer.olmo_relative_training_data["in_year_there_word_counts"]
+        dist_co = analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"]
+    elif model_name == "pythia":
+        dist_pred = analyzer.pythia_relative_predictions
+        dist_sm = analyzer.pythia_relative_training_data["in_year_there_word_counts"]
+        dist_co = analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"]
+    else:
+        raise ValueError("model_name must be 'olmo' or 'pythia'")
+
+    # Use only checkpoints present in all three distributions
+    checkpoints = sorted(set(dist_pred.keys()) & set(dist_sm.keys()) & set(dist_co.keys()))
+
+    experiments = ['experiment1_past_vs_present_future', 'experiment2_past_vs_future']
+    experiment_titles = [
+        'Binary Classification: Past vs (Present + Future)',
+        'Binary Classification: Past vs Future (ignoring Present)'
+    ]
+
+    labels = ["predictions", "string match", "co occurrence"]
+    color_map = {
+        "predictions": CROSS_ENTROPY_COLORS[0],
+        "string match": CROSS_ENTROPY_COLORS[1],
+        "co occurrence": CROSS_ENTROPY_COLORS[2],
+    }
+
+    def _avg_all_years(exp_data):
+        # compute_cross_entropy_over_range already averaged over the requested range
+        return float(exp_data['average_loss'])
+
+    def _avg_specific_years(exp_data, years_list):
+        assert len(years_list) > 0, "Expected non-empty year list for string-match average"
+        losses = [exp_data['per_year_losses'][str(y)] for y in years_list]
+        assert len(losses) > 0, "No losses found for provided years"
+        return float(sum(losses) / len(losses))
+
+    for exp_key, exp_title in zip(experiments, experiment_titles):
+        x_cps = []
+
+        # Each dict maps label -> list of averages over checkpoints
+        full_avgs = {lbl: [] for lbl in labels}
+        sm_avgs = {lbl: [] for lbl in labels}
+
+        for cp in checkpoints:
+            ce_pred = analyzer.compute_cross_entropy_over_range(dist_pred, model_name, cp, year_start, year_end)
+            ce_sm   = analyzer.compute_cross_entropy_over_range(dist_sm,   model_name, cp, year_start, year_end)
+            ce_co   = analyzer.compute_cross_entropy_over_range(dist_co,   model_name, cp, year_start, year_end)
+
+            # Full averages (over own years within range)
+            full_avgs["predictions"].append(_avg_all_years(ce_pred[exp_key]))
+            full_avgs["string match"].append(_avg_all_years(ce_sm[exp_key]))
+            full_avgs["co occurrence"].append(_avg_all_years(ce_co[exp_key]))
+
+            # String-match restricted averages
+            sm_years = [int(y) for y in ce_sm[exp_key]['years_used'] if year_start <= int(y) <= year_end]
+            sm_avgs["predictions"].append(_avg_specific_years(ce_pred[exp_key], sm_years))
+            sm_avgs["string match"].append(_avg_specific_years(ce_sm[exp_key], sm_years))
+            sm_avgs["co occurrence"].append(_avg_specific_years(ce_co[exp_key], sm_years))
+
+            x_cps.append(cp)
+
+        # Plot
+        fig, ax = plt.subplots(figsize=(12, 7))
+
+        for lbl in labels:
+            color = color_map[lbl]
+            ax.plot(x_cps, full_avgs[lbl], color=color, linestyle='-', marker='.', markersize=8, label=f"{lbl} (full)")
+            ax.plot(x_cps, sm_avgs[lbl],   color=color, linestyle='--', marker='.', markersize=8, label=f"{lbl} (string-match)")
+
+        ax.set_xlabel("Checkpoint", fontsize=12)
+        ax.set_ylabel("Average Cross-Entropy", fontsize=12)
+        ax.set_title(f"{model_name.upper()} - {exp_title}\nYears {year_start}-{year_end}", fontsize=14)
+        ax.grid(True, alpha=0.3)
+        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+
+        # y-limits based on data
+        all_vals = []
+        for d in [full_avgs, sm_avgs]:
+            for v in d.values():
+                all_vals.extend(v)
+        y_min, y_max = min(all_vals), max(all_vals)
+        y_range = y_max - y_min
+        y_pad = max(0.05 * y_range, 0.05)
+        ax.set_ylim(max(0, y_min - y_pad), y_max + y_pad)
+
+        plt.tight_layout()
+        exp_name = exp_key.replace('experiment1_', '').replace('experiment2_', '')
+        fname = f"{model_name}_avg_ce_vs_checkpoint_{exp_name}_{year_start}_{year_end}.png"
+        save_path = Path(output_dir) / fname
+        plt.savefig(save_path, dpi=600, bbox_inches='tight')
+        plt.close()
+        print(f"Saved: {save_path}")
+
 
 
 def plot_model_predictions():
@@ -783,6 +891,7 @@ def compute_cross_entropies():
     pythia_co_occurrence_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", cp, 1950, 2050)
     plot_cross_entropies([pythia_predictions_ce, pythia_string_match_ce, pythia_co_occurrence_ce], ["pythia predictions", "pythia string match", "pythia co occurrence"], "pythia")
 
+# ------------------------------------------------------------------------------------------------
 
 def save_all_analyzer_data():
     """
@@ -796,26 +905,30 @@ def save_all_analyzer_data():
 def plot_training_dynamics():
     analyzer = AnalyzerClass()
     # for appendix
-    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_predictions, "olmo", "Next-token Predictions", [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500, 7750, 8000, 8250, 8500, 8750, 9000, 9250, 9500, 9750, 10000], 8, 5, 1950, 2050)
-    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, 1950, 2050)
-    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", "in_year_there_word_counts", [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, 1950, 2050)
+    analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_predictions, "olmo", "Next-token Predictions", [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500, 7750, 8000, 8250, 8500, 8750, 9000, 9250, 9500, 9750, 10000], 8, 5, 1950, 2050)
+    analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, 1950, 2050)
+    analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", "in_year_there_word_counts", [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, 1950, 2050)
     
-    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_predictions, "pythia", "Next-token Predictions", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, 1950, 2050)
-    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", "in_year_tense_sentence_counts", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, 1950, 2050)
-    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", "in_year_there_word_counts", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, 1950, 2050)
+    analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_predictions, "pythia", "Next-token Predictions", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, 1950, 2050)
+    analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", "in_year_tense_sentence_counts", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, 1950, 2050)
+    analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", "in_year_there_word_counts", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, 1950, 2050)
     
 
     # for main section
     analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_predictions, "olmo", "Next-token Predictions", [1000, 3000, 7000], 1, 3, 1950, 2050)
     analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_predictions, "pythia", "Next-token Predictions", [1000, 3000, 7000], 1, 3, 1950, 2050)
     
-    
+def ce_over_training():
+    plot_cross_entropy_averages_over_checkpoints("olmo", 1950, 2050)
+    plot_cross_entropy_averages_over_checkpoints("pythia", 1950, 2050)
 
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
+    
     
     # plot_training_data()
     # plot_model_predictions()
     # save_all_analyzer_data()
     # compute_cross_entropies()
     # plot_training_dynamics()
+    ce_over_training()
