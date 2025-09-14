@@ -71,6 +71,33 @@ class AnalyzerClass:
         self.populate_gold_data()
         print("finished loading all data")
     
+    def load_other_model_predictions(self, model_names):
+        model_name_to_predictions = {}
+        for model_name in model_names:
+            just_model_name = model_name.split("_")[-1]
+            model_prediction_file = f"../olmo_predictions/model_predictions__In__year__there/{model_name}/{just_model_name}_predictions.json"
+            with open(model_prediction_file, "r") as f:
+                data = json.load(f)
+
+            year_to_counts_absolute = {}
+            for year in data.keys():
+                if year == "metadata":
+                    continue
+                verb_count_dict = data[year]["absolute"]
+                # Remove leading spaces from verb keys for Pythia predictions
+                verb_count_dict_cleaned = {k.strip(): v for k, v in verb_count_dict.items()}
+                
+                tense_counts_absolute = {}
+                for verb, tense in TENSE_MAPPING.items():
+                    if verb in verb_count_dict_cleaned:
+                        tense_counts_absolute.setdefault(tense, 0)
+                        tense_counts_absolute[tense] += verb_count_dict_cleaned[verb]
+
+                year_to_counts_absolute[year]= tense_counts_absolute
+            model_name_to_predictions[model_name] = {"final": year_to_counts_absolute}
+        return model_name_to_predictions
+            
+
 
 
     def _normalize_tense_distribution(self, tense_counts):
@@ -1115,6 +1142,15 @@ if __name__ == "__main__":
     analyzer.bar_plot(analyzer.olmo_relative_predictions, "olmo", "Next-token predictions", cp, start_year, years_end)
     analyzer.bar_plot(analyzer.pythia_relative_predictions, "pythia", "Next-token predictions", cp, start_year, years_end)
 
+    # plot_model_predictions absolute with other models
+    model_names = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1b-deduped", "EleutherAI_pythia-1.4b-deduped","EleutherAI_pythia-6.9b-deduped", "allenai_OLMo-2-1124-7B", "meta-llama_Llama-3.1-8B"]
+    model_name_to_predictions = analyzer.load_other_model_predictions(model_names)
+    for model_name in model_names:
+        analyzer.bar_plot(model_name_to_predictions[model_name], model_name, "Next-token predictions", "final", start_year, years_end)
+
+    # plot other prompts for pythia and olmo
+    # TODO
+
     # compute_cross_entropies
     olmo_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_predictions, "olmo", cp, start_year, years_end)
     olmo_string_match_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", cp, start_year, years_end)
@@ -1150,6 +1186,9 @@ if __name__ == "__main__":
 
     # ce_over_more_checkpoints_pythia()
     plot_prediction_ce_averages_over_checkpoints("pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
+
+
+
 
     
 
