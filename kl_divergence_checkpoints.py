@@ -1,14 +1,10 @@
+
 import os
 import json
 import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
-import torch
-from scipy.stats import spearmanr
-import torch.nn.functional as F
-from matplotlib.lines import Line2D
 from datetime import datetime
-from fractions import Fraction
 
 PYTHIA_PREDICTIONS_FILE = "../olmo_predictions/model_predictions__In__year__there/EleutherAI_pythia-1.4b-deduped_rev_step{cp}/pythia-1.4b-deduped_rev_step{cp}_predictions.json"
 OLMO_PREDICTIONS_FILE = "../olmo_predictions/output_checkpoints_olmo/checkpoint_{cp}.json" # this is the 2nd try model
@@ -30,7 +26,9 @@ CROSS_ENTROPY_COLORS = ["grey", "blue", "red"]
 TOTAL_YEARS = (1000, 3000) # goes until 2999
 
 OLMO_CUTOFF = 2024
+OLMO_CHECKPOINTS = list(range(250, 10001, 250))
 PYTHIA_CUTOFF = 2020
+PYTHIA_CHECKPOINTS = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 15000, 20000, 40000, 60000, 80000, 90000, 100000, 110000, 120000, 130000, 143000]
 
 class AnalyzerClass:
     def __init__(self):
@@ -318,15 +316,16 @@ class AnalyzerClass:
             return tense_counts_absolute, tense_counts_relative
             
 
-        def load_model_predictions(file_template, step_size):
+        def load_model_predictions(file_template, checkpoints):
             results_absolute = {}
             results_relative = {}
-            for cp in range(step_size, 10001, step_size):
+            for cp in checkpoints:
                 filepath = file_template.format(cp=cp)
                 if not os.path.exists(filepath):
                     raise FileNotFoundError(f"could not find {filepath}")
                 with open(filepath, "r") as f:
                     data = json.load(f)
+                print(f"Loaded {filepath}")
                 
                 year_to_counts_absolute = {}
                 year_to_counts_relative = {}
@@ -355,8 +354,8 @@ class AnalyzerClass:
                 results_relative[cp] = year_to_counts_relative
             return results_absolute, results_relative
 
-        self.olmo_predictions, self.olmo_relative_predictions = load_model_predictions(OLMO_PREDICTIONS_FILE, 250)
-        self.pythia_predictions, self.pythia_relative_predictions = load_model_predictions(PYTHIA_PREDICTIONS_FILE, 1000)
+        self.olmo_predictions, self.olmo_relative_predictions = load_model_predictions(OLMO_PREDICTIONS_FILE, OLMO_CHECKPOINTS)
+        self.pythia_predictions, self.pythia_relative_predictions = load_model_predictions(PYTHIA_PREDICTIONS_FILE, PYTHIA_CHECKPOINTS)
 
 
     def populate_gold_data(self):
@@ -371,13 +370,10 @@ class AnalyzerClass:
                 gold_per_year[str(year)] = year_dist
             return gold_per_year
 
-        # Default checkpoint list
-        olmo_cps = range(250, 10001, 250)
-        pythia_cps = range(1000, 10001, 1000)
 
-        for cp in olmo_cps:
+        for cp in OLMO_CHECKPOINTS:
             self.olmo_gold_distribution[cp] = populate_gold_distribution(OLMO_CUTOFF)
-        for cp in pythia_cps:
+        for cp in PYTHIA_CHECKPOINTS:
             self.pythia_gold_distribution[cp] = populate_gold_distribution(PYTHIA_CUTOFF)
 
 
@@ -1180,6 +1176,9 @@ def plot_prediction_ce_averages_over_checkpoints(model_name, checkpoints, year_s
         plt.close()
         print(f"Saved: {save_path}")
 
+def ce_over_more_checkpoints_pythia():
+    plot_prediction_ce_averages_over_checkpoints("pythia", PYTHIA_CHECKPOINTS, 1950, 2050)
+
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
     
@@ -1190,7 +1189,8 @@ if __name__ == "__main__":
     # compute_cross_entropies()
     # plot_training_dynamics()
     # ce_over_training()
-    ce_over_training_split()
+    # ce_over_training_split()
+    ce_over_more_checkpoints_pythia()
 
     
 
