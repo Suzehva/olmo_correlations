@@ -70,6 +70,34 @@ class AnalyzerClass:
         self.load_model_predictions()
         self.populate_gold_data()
         print("finished loading all data")
+
+    def load_other_prompts(self, prompt_names):
+        prompt_to_model_to_predictions = {}
+        for prompt_name in prompt_names:
+            prompt_to_model_to_predictions[prompt_name] = {}
+            for model_name, just_model_name in [("allenai_OLMo-2-0425-1B", "OLMo-2-0425-1B"), ("EleutherAI_pythia-1.4b-deduped", "pythia-1.4b-deduped")]:
+                model_prediction_file = f"../olmo_predictions/model_predictions__{prompt_name}/{model_name}/{just_model_name}_all_verbs_predictions.json"
+                with open(model_prediction_file, "r") as f:
+                    data = json.load(f)
+                year_to_counts_absolute = {}
+                for year in data.keys():
+                    if year == "metadata":
+                        continue
+                    verb_count_dict = data[year]["absolute"]
+                    # Remove leading spaces from verb keys for predictions
+                    verb_count_dict_cleaned = {k.strip(): v for k, v in verb_count_dict.items()}
+                    
+                    tense_counts_absolute = {}
+                    for verb, tense in TENSE_MAPPING.items():
+                        if verb in verb_count_dict_cleaned:
+                            tense_counts_absolute.setdefault(tense, 0)
+                            tense_counts_absolute[tense] += verb_count_dict_cleaned[verb]
+
+                    year_to_counts_absolute[year]= tense_counts_absolute
+                prompt_to_model_to_predictions[prompt_name][model_name] = {"final": year_to_counts_absolute}
+        return prompt_to_model_to_predictions
+            
+        
     
     def load_other_model_predictions(self, model_names):
         model_name_to_predictions = {}
@@ -1149,7 +1177,16 @@ if __name__ == "__main__":
         analyzer.bar_plot(model_name_to_predictions[model_name], model_name, "Next-token predictions", "final", start_year, years_end)
 
     # plot other prompts for pythia and olmo
-    # TODO
+    prompt_names = [
+        "During__year__there", "In__year__the_choir", "In__year__there", 
+        "In__year__they", "In__year_,_at_the_dinner_table,_the_family", 
+        "In__year_,_there", "In__year_,_with_a_knife,_he", "In__year_,_with_a_pen_to_paper,_she", 
+        "In__year_,_with_his_credit_card,_he", "In_the_magic_show_in__year_,_there_magically",
+    ]
+    prompt_to_model_to_predictions = analyzer.load_other_prompts(prompt_names)
+    for prompt, model_to_pred in prompt_to_model_to_predictions.items():
+        for model_name, pred in model_to_pred.items():
+            analyzer.bar_plot(prompt_to_model_to_predictions[prompt][model_name], model_name, "Next-token predictions", "final", start_year, years_end)
 
     # compute_cross_entropies
     olmo_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_predictions, "olmo", cp, start_year, years_end)
