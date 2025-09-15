@@ -25,6 +25,22 @@ TENSE_COLORS = {"past": "orange", "future": "green", "present": "#4b0082"}
 CROSS_ENTROPY_COLORS = ["grey", "blue", "red"]
 TOTAL_YEARS = (1000, 3000) # goes until 2999
 
+# Standardized display names for data types used throughout plotting
+DISPLAY_NAMES = {
+    "in_year_tense_sentence_counts": "Co-occurrence model",
+    "in_year_tense_counts": "Co-occurrence model",
+    "in_year_there_word_counts": "Exact string match model",
+    "Laplace-smoothed n-gram": "N-gram model",
+    "Next-token predictions": "Next-token predictions",
+    "Next-token Predictions": "Next-token predictions",
+}
+
+# Nice names for model identifiers used in plot titles
+MODEL_DISPLAY_NAMES = {
+    "pythia": "Pythia-1.4b-deduped",
+    "olmo": "OLMo2-1B",
+}
+
 OLMO_CUTOFF = 2024
 OLMO_CHECKPOINTS = list(range(250, 10001, 250))
 PYTHIA_CUTOFF = 2020
@@ -508,25 +524,34 @@ class AnalyzerClass:
         tenses = [t for t in TENSE_ORDER if t in set(TENSE_MAPPING.values())]
         
         # Plot
-        fig, ax = plt.subplots(figsize=(12, 6))
+        fig, ax = plt.subplots(figsize=(8, 4))
         bottom = np.zeros(len(years))
         
         for tense in tenses:
             vals = np.array([cp_data[y].get(tense, 0) for y in years])
             ax.bar(range(len(years)), vals, bottom=bottom, 
-                  label=tense, color=TENSE_COLORS[tense], width=1.0)
+                  label=tense.title(), color=TENSE_COLORS[tense], width=1.0)
             bottom += vals
         
         # Format
-        title = f"{data_type} | Checkpoint {checkpoint} | Years {year_start}-{year_end}"
+        display_data_type = DISPLAY_NAMES.get(data_type, data_type)
+        model_display = MODEL_DISPLAY_NAMES.get(model, str(model))
+        title = f"{model_display} — {display_data_type}"
         safe_data_type = data_type.replace(' ', '_')
         filename = f"{model}_checkpoint{checkpoint}_{safe_data_type}_{year_start}-{year_end}"
         
         ax.set_title(title)
-        ax.set_xticks(range(0, len(years), max(1, len(years)//20)))
-        ax.set_xticklabels(years[::max(1, len(years)//20)], rotation=45)
+        # Use 10-year intervals for x-axis ticks; fallback if none present
+        tick_indices = [i for i, y in enumerate(years) if int(y) % 10 == 0]
+        if tick_indices:
+            ax.set_xticks(tick_indices)
+            ax.set_xticklabels([years[i] for i in tick_indices], rotation=45)
+        else:
+            step = max(1, len(years)//20)
+            ax.set_xticks(range(0, len(years), step))
+            ax.set_xticklabels(years[::step], rotation=45)
         ax.set_ylabel("Probability")
-        ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+        ax.legend(loc='lower left')
         
         # Remove whitespace around plot
         ax.set_xlim(-0.5, len(years) - 0.5)  # Remove left/right whitespace
@@ -559,7 +584,7 @@ class AnalyzerClass:
         if len(checkpoints) > rows * cols:
             raise ValueError(f"Too many checkpoints ({len(checkpoints)}) for grid size {rows}×{cols}")
 
-        fig, axes = plt.subplots(rows, cols, figsize=(5 * cols, 4 * rows))
+        fig, axes = plt.subplots(rows, cols, figsize=(3.5 * cols, 2.5 * rows))
         if rows == 1 and cols == 1:
             axes = [axes]
         else:
@@ -597,7 +622,9 @@ class AnalyzerClass:
                 bottom += vals
 
             # Format subplot
-            ax.set_title(f"{data_type} | Checkpoint {cp}", fontsize=10)
+            display_data_type = DISPLAY_NAMES.get(data_type, data_type)
+            model_display = MODEL_DISPLAY_NAMES.get(model, str(model))
+            ax.set_title(f"{model_display} — {display_data_type} | Checkpoint {cp}", fontsize=10)
             tick_step = max(1, len(years) // 20)
             ax.set_xticks(range(0, len(years), tick_step))
             ax.set_xticklabels(years[::tick_step], rotation=45, fontsize=9)
@@ -621,7 +648,7 @@ class AnalyzerClass:
         # Save combined figure
         year_range = f"{year_start}-{year_end}"
         cps_str = f"{len(checkpoints)}cps"
-        safe_data_type = data_type.replace(' ', '_')
+        safe_data_type = DISPLAY_NAMES.get(data_type, data_type).replace(' ', '_')
         output_filename = f"{model}_{safe_data_type}_{cps_str}_{rows}x{cols}_{year_range}.png"
 
         output_dir = "checkpoint_bar_plots"
@@ -649,7 +676,7 @@ def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=19
     exp_key = EXPERIMENT_KEY
     exp_title = EXPERIMENT_TITLE
     
-    fig, ax = plt.subplots(figsize=(14, 8))
+    fig, ax = plt.subplots(figsize=(9, 5))
     
     all_years_plotted = []
     all_losses_plotted = []
@@ -816,11 +843,11 @@ def plot_cross_entropy_averages_over_checkpoints(analyzer, model_name, year_star
     exp_key = EXPERIMENT_KEY
     exp_title = EXPERIMENT_TITLE
 
-    labels = ["predictions", "ngram", "co occurrence"]
+    labels = ["Next-token predictions", "N-gram model", "Co-occurrence model"]
     color_map = {
-        "predictions": CROSS_ENTROPY_COLORS[0],
-        "ngram": CROSS_ENTROPY_COLORS[1],
-        "co occurrence": CROSS_ENTROPY_COLORS[2],
+        "Next-token predictions": CROSS_ENTROPY_COLORS[0],
+        "N-gram model": CROSS_ENTROPY_COLORS[1],
+        "Co-occurrence model": CROSS_ENTROPY_COLORS[2],
     }
 
     def _avg_specific_years(exp_data, years_list):
@@ -847,20 +874,20 @@ def plot_cross_entropy_averages_over_checkpoints(analyzer, model_name, year_star
         common_years = sorted(pred_years & ngram_years & co_years)
 
         # Compute averages over common years only
-        full_avgs["predictions"].append(_avg_specific_years(ce_pred[exp_key], common_years))
-        full_avgs["ngram"].append(_avg_specific_years(ce_ngram[exp_key], common_years))
-        full_avgs["co occurrence"].append(_avg_specific_years(ce_co[exp_key], common_years))
+        full_avgs["Next-token predictions"].append(_avg_specific_years(ce_pred[exp_key], common_years))
+        full_avgs["N-gram model"].append(_avg_specific_years(ce_ngram[exp_key], common_years))
+        full_avgs["Co-occurrence model"].append(_avg_specific_years(ce_co[exp_key], common_years))
 
         # Ngram-restricted averages (use ngram years as reference since it has most complete data)
         ngram_years_list = [int(y) for y in ce_ngram[exp_key]['years_used'] if year_start <= int(y) <= year_end]
-        ngram_avgs["predictions"].append(_avg_specific_years(ce_pred[exp_key], ngram_years_list))
-        ngram_avgs["ngram"].append(_avg_specific_years(ce_ngram[exp_key], ngram_years_list))
-        ngram_avgs["co occurrence"].append(_avg_specific_years(ce_co[exp_key], ngram_years_list))
+        ngram_avgs["Next-token predictions"].append(_avg_specific_years(ce_pred[exp_key], ngram_years_list))
+        ngram_avgs["N-gram model"].append(_avg_specific_years(ce_ngram[exp_key], ngram_years_list))
+        ngram_avgs["Co-occurrence model"].append(_avg_specific_years(ce_co[exp_key], ngram_years_list))
 
         x_cps.append(cp)
 
     # Plot
-    fig, ax = plt.subplots(figsize=(12, 7))
+    fig, ax = plt.subplots(figsize=(9, 5))
 
     for lbl in labels:
         color = color_map[lbl]
@@ -1025,7 +1052,7 @@ def plot_prediction_ce_all_years_over_checkpoints(analyzer, model_name, year_sta
                 year_to_series[yi]['y'].append(loss)
 
     # Plot
-    fig, ax = plt.subplots(figsize=(12, 8))
+    fig, ax = plt.subplots(figsize=(9, 6))
     all_vals = []
 
     for yi in range(year_start, year_end + 1):
@@ -1108,9 +1135,9 @@ def plot_prediction_ce_averages_over_checkpoints(analyzer, model_name, checkpoin
         print(f"No data to plot for {model_name} {exp_key}")
         return
 
-    fig, ax = plt.subplots(figsize=(12, 7))
+    fig, ax = plt.subplots(figsize=(9, 5))
     color = CROSS_ENTROPY_COLORS[0]
-    ax.plot(x_cps, avgs, color=color, linestyle='-', marker='.', markersize=8, label="predictions")
+    ax.plot(x_cps, avgs, color=color, linestyle='-', marker='.', markersize=8, label="Next-token predictions")
 
     ax.set_xlabel("Checkpoint", fontsize=12)
     ax.set_ylabel("Average Cross-Entropy", fontsize=12)
@@ -1132,7 +1159,7 @@ def plot_prediction_ce_averages_over_checkpoints(analyzer, model_name, checkpoin
     plt.close()
     print(f"Saved: {save_path}")
 
-
+# ------------------------------------------------------------
 
 if __name__ == "__main__":
     # python kl_divergence_checkpoints.py
@@ -1146,75 +1173,78 @@ if __name__ == "__main__":
     filepath = analyzer.save_all_data_to_file()
     print(f"Data export completed. File saved: {filepath}")
 
-    # plot_training_data
-    analyzer.bar_plot(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", "in_year_there_word_counts", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", "in_year_tense_sentence_counts", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", "in_year_there_word_counts", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", "Laplace-smoothed n-gram", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", "Laplace-smoothed n-gram", cp, start_year, years_end)
-
-    # plot_model_predictions
-    analyzer.bar_plot(analyzer.olmo_relative_predictions, "olmo", "Next-token predictions", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_relative_predictions, "pythia", "Next-token predictions", cp, start_year, years_end)
-
-    # plot_model_predictions absolute with other models
-    model_names = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1b-deduped", "EleutherAI_pythia-1.4b-deduped","EleutherAI_pythia-6.9b-deduped", "allenai_OLMo-2-1124-7B", "meta-llama_Llama-3.1-8B"]
-    model_name_to_predictions = analyzer.load_other_model_predictions(model_names)
-    for model_name in model_names:
-        analyzer.bar_plot(model_name_to_predictions[model_name], model_name, "Next-token predictions", "final", start_year, years_end)
-
-    # plot other prompts for pythia and olmo
-    prompt_names = [
-        "During__year__there", "In__year__the_choir", "In__year__there", 
-        "In__year__they", "In__year_,_at_the_dinner_table,_the_family", 
-        "In__year_,_there", "In__year_,_with_a_knife,_he", "In__year_,_with_a_pen_to_paper,_she", 
-        "In__year_,_with_his_credit_card,_he", "In_the_magic_show_in__year_,_there_magically",
-    ]
-    prompt_to_model_to_predictions = analyzer.load_other_prompts(prompt_names)
-    for prompt, model_to_pred in prompt_to_model_to_predictions.items():
-        for model_name, pred in model_to_pred.items():
-            analyzer.bar_plot(prompt_to_model_to_predictions[prompt][model_name], model_name, f"Next-token predictions__{prompt}", "final", start_year, years_end)
-
-    # compute_cross_entropies
-    olmo_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_predictions, "olmo", cp, start_year, years_end)
-    olmo_string_match_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", cp, start_year, years_end)
-    olmo_co_occurrence_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", cp, start_year, years_end)
-    olmo_ngram_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_ngram, "olmo", cp, start_year, years_end)
-    plot_cross_entropies([olmo_predictions_ce, olmo_ngram_ce, olmo_co_occurrence_ce], ["olmo predictions", "olmo ngram", "olmo co occurrence"], "olmo")
-    plot_cross_entropies([olmo_string_match_ce], ["olmo string match"], "olmo") # for appendix
-
-    pythia_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_predictions, "pythia", cp, start_year, years_end)
-    pythia_string_match_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", cp, start_year, years_end)
-    pythia_co_occurrence_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", cp, start_year, years_end)
-    pythia_ngram_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_ngram, "pythia", cp, start_year, years_end)
-    plot_cross_entropies([pythia_predictions_ce, pythia_ngram_ce, pythia_co_occurrence_ce], ["pythia predictions", "pythia ngram", "pythia co occurrence"], "pythia")
-    plot_cross_entropies([pythia_string_match_ce], ["pythia string match"], "pythia")
-
-    # plot_training_dynamics
-    analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_predictions, "olmo", "Next-token Predictions", [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500, 7750, 8000, 8250, 8500, 8750, 9000, 9250, 9500, 9750, 10000], 8, 5, start_year, years_end)
-    analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
-    analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_ngram, "olmo", "Laplace-smoothed n-gram", [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
-    
-    analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_predictions, "pythia", "Next-token Predictions", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
-    analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", "in_year_tense_sentence_counts", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
-    analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_ngram, "pythia", "Laplace-smoothed n-gram", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
-    
-
-    # ce_over_training()
-    plot_cross_entropy_averages_over_checkpoints(analyzer, "olmo", start_year, years_end)
-    plot_cross_entropy_averages_over_checkpoints(analyzer, "pythia", start_year, years_end)
-
-    # ce_over_training_split()
-    plot_prediction_ce_all_years_over_checkpoints(analyzer, "olmo", start_year, years_end)
-    plot_prediction_ce_all_years_over_checkpoints(analyzer, "pythia", start_year, years_end)
-
-    # ce_over_more_checkpoints_pythia()
-    plot_prediction_ce_averages_over_checkpoints(analyzer, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
-
-
-
+    if True:
+        # plot_training_data
+        # analyzer.bar_plot(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", cp, start_year, years_end)
+        # analyzer.bar_plot(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", "in_year_there_word_counts", cp, start_year, years_end)
+        # analyzer.bar_plot(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", "in_year_tense_sentence_counts", cp, start_year, years_end)
+        # analyzer.bar_plot(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", "in_year_there_word_counts", cp, start_year, years_end)
+        # analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", "Laplace-smoothed n-gram", cp, start_year, years_end)
+        # analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", "Laplace-smoothed n-gram", cp, start_year, years_end)
 
     
+        # # plot_model_predictions
+        # analyzer.bar_plot(analyzer.olmo_relative_predictions, "olmo", "Next-token predictions", cp, start_year, years_end)
+        # analyzer.bar_plot(analyzer.pythia_relative_predictions, "pythia", "Next-token predictions", cp, start_year, years_end)
 
-    
+
+        # plot_model_predictions absolute with other models
+        model_names = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1b-deduped", "EleutherAI_pythia-1.4b-deduped","EleutherAI_pythia-6.9b-deduped", "allenai_OLMo-2-1124-7B", "meta-llama_Llama-3.1-8B"]
+        model_name_to_predictions = analyzer.load_other_model_predictions(model_names)
+        for model_name in model_names:
+            analyzer.bar_plot(model_name_to_predictions[model_name], model_name, "Next-token predictions", "final", start_year, years_end)
+    else:
+        # plot other prompts for pythia and olmo
+        prompt_names = [
+            "During__year__there", "In__year__the_choir", "In__year__there", 
+            "In__year__they", "In__year_,_at_the_dinner_table,_the_family", 
+            "In__year_,_there", "In__year_,_with_a_knife,_he", "In__year_,_with_a_pen_to_paper,_she", 
+            "In__year_,_with_his_credit_card,_he", "In_the_magic_show_in__year_,_there_magically",
+        ]
+        prompt_to_model_to_predictions = analyzer.load_other_prompts(prompt_names)
+        for prompt, model_to_pred in prompt_to_model_to_predictions.items():
+            for model_name, pred in model_to_pred.items():
+                analyzer.bar_plot(prompt_to_model_to_predictions[prompt][model_name], model_name, f"Next-token predictions__{prompt}", "final", start_year, years_end)
+
+        # compute_cross_entropies
+        olmo_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_predictions, "olmo", cp, start_year, years_end)
+        olmo_string_match_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", cp, start_year, years_end)
+        olmo_co_occurrence_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", cp, start_year, years_end)
+        olmo_ngram_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_ngram, "olmo", cp, start_year, years_end)
+        plot_cross_entropies([olmo_predictions_ce, olmo_ngram_ce, olmo_co_occurrence_ce], ["Next-token predictions", "N-gram model", "Co-occurrence model"], "olmo")
+        plot_cross_entropies([olmo_string_match_ce], ["Exact string match model"], "olmo") # for appendix
+
+        pythia_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_predictions, "pythia", cp, start_year, years_end)
+        pythia_string_match_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", cp, start_year, years_end)
+        pythia_co_occurrence_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", cp, start_year, years_end)
+        pythia_ngram_ce = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_ngram, "pythia", cp, start_year, years_end)
+        plot_cross_entropies([pythia_predictions_ce, pythia_ngram_ce, pythia_co_occurrence_ce], ["Next-token predictions", "N-gram model", "Co-occurrence model"], "pythia")
+        plot_cross_entropies([pythia_string_match_ce], ["Exact string match model"], "pythia")
+
+        # plot_training_dynamics
+        analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_predictions, "olmo", "Next-token Predictions", [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500, 7750, 8000, 8250, 8500, 8750, 9000, 9250, 9500, 9750, 10000], 8, 5, start_year, years_end)
+        analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
+        analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_ngram, "olmo", "Laplace-smoothed n-gram", [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
+        
+        analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_predictions, "pythia", "Next-token Predictions", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+        analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", "in_year_tense_sentence_counts", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+        analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_ngram, "pythia", "Laplace-smoothed n-gram", [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+        
+
+        # ce_over_training()
+        plot_cross_entropy_averages_over_checkpoints(analyzer, "olmo", start_year, years_end)
+        plot_cross_entropy_averages_over_checkpoints(analyzer, "pythia", start_year, years_end)
+
+        # ce_over_training_split()
+        plot_prediction_ce_all_years_over_checkpoints(analyzer, "olmo", start_year, years_end)
+        plot_prediction_ce_all_years_over_checkpoints(analyzer, "pythia", start_year, years_end)
+
+        # ce_over_more_checkpoints_pythia()
+        plot_prediction_ce_averages_over_checkpoints(analyzer, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
+
+
+
+
+        
+
+        
