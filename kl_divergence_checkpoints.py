@@ -524,7 +524,7 @@ class AnalyzerClass:
         tenses = [t for t in TENSE_ORDER if t in set(TENSE_MAPPING.values())]
         
         # Plot
-        fig, ax = plt.subplots(figsize=(8, 4))
+        fig, ax = plt.subplots(figsize=(6, 3))
         bottom = np.zeros(len(years))
         
         for tense in tenses:
@@ -1175,17 +1175,17 @@ if __name__ == "__main__":
 
     if True:
         # plot_training_data
-        # analyzer.bar_plot(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", cp, start_year, years_end)
-        # analyzer.bar_plot(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", "in_year_there_word_counts", cp, start_year, years_end)
-        # analyzer.bar_plot(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", "in_year_tense_sentence_counts", cp, start_year, years_end)
-        # analyzer.bar_plot(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", "in_year_there_word_counts", cp, start_year, years_end)
-        # analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", "Laplace-smoothed n-gram", cp, start_year, years_end)
-        # analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", "Laplace-smoothed n-gram", cp, start_year, years_end)
+        analyzer.bar_plot(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", cp, start_year, years_end)
+        analyzer.bar_plot(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", "in_year_there_word_counts", cp, start_year, years_end)
+        analyzer.bar_plot(analyzer.pythia_relative_training_data["in_year_tense_sentence_counts"], "pythia", "in_year_tense_sentence_counts", cp, start_year, years_end)
+        analyzer.bar_plot(analyzer.pythia_relative_training_data["in_year_there_word_counts"], "pythia", "in_year_there_word_counts", cp, start_year, years_end)
+        analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", "Laplace-smoothed n-gram", cp, start_year, years_end)
+        analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", "Laplace-smoothed n-gram", cp, start_year, years_end)
 
     
-        # # plot_model_predictions
-        # analyzer.bar_plot(analyzer.olmo_relative_predictions, "olmo", "Next-token predictions", cp, start_year, years_end)
-        # analyzer.bar_plot(analyzer.pythia_relative_predictions, "pythia", "Next-token predictions", cp, start_year, years_end)
+        # plot_model_predictions
+        analyzer.bar_plot(analyzer.olmo_relative_predictions, "olmo", "Next-token predictions", cp, start_year, years_end)
+        analyzer.bar_plot(analyzer.pythia_relative_predictions, "pythia", "Next-token predictions", cp, start_year, years_end)
 
 
         # plot_model_predictions absolute with other models
@@ -1193,7 +1193,7 @@ if __name__ == "__main__":
         model_name_to_predictions = analyzer.load_other_model_predictions(model_names)
         for model_name in model_names:
             analyzer.bar_plot(model_name_to_predictions[model_name], model_name, "Next-token predictions", "final", start_year, years_end)
-    else:
+
         # plot other prompts for pythia and olmo
         prompt_names = [
             "During__year__there", "In__year__the_choir", "In__year__there", 
@@ -1204,8 +1204,9 @@ if __name__ == "__main__":
         prompt_to_model_to_predictions = analyzer.load_other_prompts(prompt_names)
         for prompt, model_to_pred in prompt_to_model_to_predictions.items():
             for model_name, pred in model_to_pred.items():
-                analyzer.bar_plot(prompt_to_model_to_predictions[prompt][model_name], model_name, f"Next-token predictions__{prompt}", "final", start_year, years_end)
+                analyzer.bar_plot(prompt_to_model_to_predictions[prompt][model_name], model_name, f"Next-token predictions __{prompt}", "final", start_year, years_end)
 
+    else:
         # compute_cross_entropies
         olmo_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_predictions, "olmo", cp, start_year, years_end)
         olmo_string_match_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", cp, start_year, years_end)
