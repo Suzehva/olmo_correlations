@@ -428,6 +428,107 @@ class AnalyzerClass:
         plt.close()
         print(f"Saved: {save_path}")
 
+    def bar_plots_for_checkpoints(self, dist_dict, model, data_type, checkpoints, rows, cols, year_start, year_end):
+        """
+        Create a grid of stacked bar plots, one subplot per checkpoint.
+        Adapted for the new tense structure using 'past' and 'presfut'.
+
+        Args:
+            dist_dict: Dictionary containing distribution data (keyed by checkpoint -> year -> tense -> prob)
+            model: Model name (str)
+            data_type: Type of data being plotted (str)
+            checkpoints: List of checkpoint integers to plot
+            rows: Number of rows in the subplot grid
+            cols: Number of columns in the subplot grid
+            year_start: Start year (inclusive)
+            year_end: End year (inclusive)
+        """
+        if len(checkpoints) > rows * cols:
+            raise ValueError(f"Too many checkpoints ({len(checkpoints)}) for grid size {rows}×{cols}")
+
+        # Convert to relative distributions
+        dist_dict = self._make_relative_distributions(dist_dict)
+
+        fig, axes = plt.subplots(rows, cols, figsize=(4.5 * cols, 2.6 * rows))
+        if rows == 1 and cols == 1:
+            axes = [axes]
+        else:
+            axes = axes.flatten()
+
+        for idx, cp in enumerate(checkpoints):
+            ax = axes[idx]
+
+            cp_data = dist_dict[cp]
+            
+            # Assert that distributions sum to 1 (with small tolerance for floating point errors)
+            for year_str, year_data in cp_data.items():
+                total = sum(year_data.values())
+                assert abs(total - 1.0) < 1e-6 or total == 0.0, f"Distribution for year {year_str} sums to {total}, not 1.0: {year_data}"
+            
+            all_years = sorted(cp_data.keys())
+
+            # Filter years based on year_start and year_end
+            filtered_years = []
+            for year_str in all_years:
+                year = int(year_str)
+                if year < year_start or year > year_end:
+                    continue
+                filtered_years.append(year_str)
+            years = filtered_years
+
+            bottom = np.zeros(len(years))
+            for tense in TENSE_ORDER:
+                vals = np.array([cp_data[y].get(tense, 0) for y in years])
+                # Use "Present+Future" label for presfut, otherwise use title case
+                label = "Present+Future" if tense == "presfut" else tense.title()
+                ax.bar(range(len(years)), vals, bottom=bottom,
+                       label=label if idx == 0 else "",
+                       color=TENSE_COLORS[tense], width=1.0)
+                bottom += vals
+
+            # Format subplot
+            model_display = get_model_display_name(model, data_type)
+            ax.set_title(f"{model_display} — {data_type} | Checkpoint {cp}", fontsize=10)
+            tick_step = max(1, len(years) // 20)
+            ax.set_xticks(range(0, len(years), tick_step))
+            ax.set_xticklabels(years[::tick_step], rotation=45, fontsize=9)
+            if idx % cols == 0:
+                ax.set_ylabel("Probability")
+            ax.set_ylim(0, 1)
+            ax.set_xlim(-0.5, len(years) - 0.5)
+            ax.margins(0)
+            ax.grid(True, alpha=0.3)
+
+        # Hide any unused subplots
+        for idx in range(len(checkpoints), len(axes)):
+            axes[idx].set_visible(False)
+
+        # Add a single legend for the whole figure with proper labels
+        legend_labels = []
+        for tense in TENSE_ORDER:
+            if tense == "presfut":
+                legend_labels.append("Present+Future")
+            else:
+                legend_labels.append(tense.title())
+        
+        fig.legend(legend_labels, loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=len(TENSE_ORDER), fontsize=12)
+
+        plt.tight_layout()
+        plt.subplots_adjust(bottom=0.12)
+
+        # Save combined figure
+        year_range = f"{year_start}-{year_end}"
+        cps_str = f"{len(checkpoints)}cps"
+        safe_data_type = data_type.replace(' ', '_')
+        output_filename = f"{model}_{safe_data_type}_{cps_str}_{rows}x{cols}_{year_range}.png"
+
+        output_dir = "checkpoint_bar_plots"
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        save_path = Path(output_dir) / output_filename
+        plt.savefig(save_path, dpi=600, bbox_inches='tight')
+        plt.close()
+        print(f"Saved: {save_path}")
+
     def collect_years_with_no_data(self, dist_dict, checkpoint, year_start, year_end, model_name=""):
         """Print which years have no data in the given distribution dictionary.
         
@@ -642,63 +743,72 @@ if __name__ == "__main__":
     analyzer = AnalyzerClass()
 
     
-    filepath = analyzer.save_all_data_to_file()
-    print(f"Data export completed. File saved: {filepath}")
+    # filepath = analyzer.save_all_data_to_file()
+    # print(f"Data export completed. File saved: {filepath}")
 
-    # plot_training_data
-    analyzer.bar_plot(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.olmo_exact_string_match, "olmo", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_exact_string_match, "pythia", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, cp, start_year, years_end)
+    # # plot_training_data
+    # analyzer.bar_plot(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.olmo_exact_string_match, "olmo", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.pythia_exact_string_match, "pythia", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, cp, start_year, years_end)
 
-    # plot_model_predictions
-    analyzer.bar_plot(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, cp, start_year, years_end)
+    # # plot_model_predictions
+    # analyzer.bar_plot(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, cp, start_year, years_end)
 
-    # plot_model_predictions with other models
-    for model_name in analyzer.other_model_predictions.keys():
-        analyzer.bar_plot(analyzer.other_model_predictions[model_name], model_name, NEXT_TOKEN_NAME, "final", start_year, years_end, make_relative=False, separate_present_future=True)
+    # # plot_model_predictions with other models
+    # for model_name in analyzer.other_model_predictions.keys():
+    #     analyzer.bar_plot(analyzer.other_model_predictions[model_name], model_name, NEXT_TOKEN_NAME, "final", start_year, years_end, make_relative=False, separate_present_future=True)
 
 
-    # compute losses for 10k checkpoint
-    olmo_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_predictions, "olmo", cp, start_year, years_end)
-    olmo_co_occurrence_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_co_occurrence, "olmo", cp, start_year, years_end)
-    olmo_ngram_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_ngram, "olmo", cp, start_year, years_end)
-    olmo_exact_string_match_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_exact_string_match, "olmo", cp, start_year, years_end, allow_missing_data=True)
-    print(f"Olmo predictions average loss: {olmo_pred_loss['average_loss']}")
-    print(f"Olmo co-occurrence average loss: {olmo_co_occurrence_loss['average_loss']}")
-    print(f"Olmo n-gram average loss: {olmo_ngram_loss['average_loss']}")
-    print(f"Olmo exact string match average loss (years used: {len(olmo_exact_string_match_loss['years_used'])}): {olmo_exact_string_match_loss['average_loss']}")
-    print("--------------------------------")
+    # # compute losses for 10k checkpoint
+    # olmo_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_predictions, "olmo", cp, start_year, years_end)
+    # olmo_co_occurrence_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_co_occurrence, "olmo", cp, start_year, years_end)
+    # olmo_ngram_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_ngram, "olmo", cp, start_year, years_end)
+    # olmo_exact_string_match_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_exact_string_match, "olmo", cp, start_year, years_end, allow_missing_data=True)
+    # print(f"Olmo predictions average loss: {olmo_pred_loss['average_loss']}")
+    # print(f"Olmo co-occurrence average loss: {olmo_co_occurrence_loss['average_loss']}")
+    # print(f"Olmo n-gram average loss: {olmo_ngram_loss['average_loss']}")
+    # print(f"Olmo exact string match average loss (years used: {len(olmo_exact_string_match_loss['years_used'])}): {olmo_exact_string_match_loss['average_loss']}")
+    # print("--------------------------------")
     
-    pythia_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_predictions, "pythia", cp, start_year, years_end)
-    pythia_co_occurrence_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_co_occurrence, "pythia", cp, start_year, years_end)
-    pythia_ngram_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_ngram, "pythia", cp, start_year, years_end)
-    pythia_exact_string_match_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_exact_string_match, "pythia", cp, start_year, years_end, allow_missing_data=True)
-    print(f"Pythia predictions average loss: {pythia_pred_loss['average_loss']}")
-    print(f"Pythia co-occurrence average loss: {pythia_co_occurrence_loss['average_loss']}")
-    print(f"Pythia n-gram average loss: {pythia_ngram_loss['average_loss']}")
-    print(f"Pythia exact string match average loss (years used: {len(pythia_exact_string_match_loss['years_used'])}): {pythia_exact_string_match_loss['average_loss']}")
-    print("--------------------------------")
-    # print summary of average losses for 10k checkpoint
-    olmo_exact_str_years = analyzer.collect_years_with_no_data(analyzer.olmo_exact_string_match, cp, start_year, years_end, "OLMo exact string match")
-    olmo_pred_loss_less_data = analyzer.compute_cross_entropy_over_range(analyzer.olmo_predictions, "olmo", cp, start_year, years_end, specific_years=olmo_exact_str_years)
-    print(f"Olmo predictions average loss (years used: {len(olmo_exact_str_years)}): {olmo_pred_loss_less_data['average_loss']}")
-    print("--------------------------------")
+    # pythia_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_predictions, "pythia", cp, start_year, years_end)
+    # pythia_co_occurrence_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_co_occurrence, "pythia", cp, start_year, years_end)
+    # pythia_ngram_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_ngram, "pythia", cp, start_year, years_end)
+    # pythia_exact_string_match_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_exact_string_match, "pythia", cp, start_year, years_end, allow_missing_data=True)
+    # print(f"Pythia predictions average loss: {pythia_pred_loss['average_loss']}")
+    # print(f"Pythia co-occurrence average loss: {pythia_co_occurrence_loss['average_loss']}")
+    # print(f"Pythia n-gram average loss: {pythia_ngram_loss['average_loss']}")
+    # print(f"Pythia exact string match average loss (years used: {len(pythia_exact_string_match_loss['years_used'])}): {pythia_exact_string_match_loss['average_loss']}")
+    # print("--------------------------------")
+    # # print summary of average losses for 10k checkpoint
+    # olmo_exact_str_years = analyzer.collect_years_with_no_data(analyzer.olmo_exact_string_match, cp, start_year, years_end, "OLMo exact string match")
+    # olmo_pred_loss_less_data = analyzer.compute_cross_entropy_over_range(analyzer.olmo_predictions, "olmo", cp, start_year, years_end, specific_years=olmo_exact_str_years)
+    # print(f"Olmo predictions average loss (years used: {len(olmo_exact_str_years)}): {olmo_pred_loss_less_data['average_loss']}")
+    # print("--------------------------------")
     
-    # print summary of loss if only using ones frome xact string match for each metods
-    pythia_exact_str_years = analyzer.collect_years_with_no_data(analyzer.pythia_exact_string_match, cp, start_year, years_end, "Pythia exact string match")
-    pythia_pred_loss_less_data = analyzer.compute_cross_entropy_over_range(analyzer.pythia_predictions, "pythia", cp, start_year, years_end, specific_years=pythia_exact_str_years)
-    print(f"Pythia predictions average loss (years used: {len(pythia_exact_str_years)}): {pythia_pred_loss_less_data['average_loss']}")
-    print("--------------------------------")
+    # # print summary of loss if only using ones frome xact string match for each metods
+    # pythia_exact_str_years = analyzer.collect_years_with_no_data(analyzer.pythia_exact_string_match, cp, start_year, years_end, "Pythia exact string match")
+    # pythia_pred_loss_less_data = analyzer.compute_cross_entropy_over_range(analyzer.pythia_predictions, "pythia", cp, start_year, years_end, specific_years=pythia_exact_str_years)
+    # print(f"Pythia predictions average loss (years used: {len(pythia_exact_str_years)}): {pythia_pred_loss_less_data['average_loss']}")
+    # print("--------------------------------")
 
-    # plot cross-entropy losses
-    plot_cross_entropies([olmo_pred_loss, olmo_co_occurrence_loss, olmo_ngram_loss], [NEXT_TOKEN_NAME, CO_OCCURR_NAME, NGRAM_NAME], "olmo", start_year, years_end)
-    plot_cross_entropies([pythia_pred_loss, pythia_co_occurrence_loss, pythia_ngram_loss], [NEXT_TOKEN_NAME, CO_OCCURR_NAME, NGRAM_NAME], "pythia", start_year, years_end)
+    # # plot cross-entropy losses
+    # plot_cross_entropies([olmo_pred_loss, olmo_co_occurrence_loss, olmo_ngram_loss], [NEXT_TOKEN_NAME, CO_OCCURR_NAME, NGRAM_NAME], "olmo", start_year, years_end)
+    # plot_cross_entropies([pythia_pred_loss, pythia_co_occurrence_loss, pythia_ngram_loss], [NEXT_TOKEN_NAME, CO_OCCURR_NAME, NGRAM_NAME], "pythia", start_year, years_end)
     
-    
-
-
+    # Generate checkpoint grid plots (APPENDIX) SUZE IS HERE
+    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500, 7750, 8000, 8250, 8500, 8750, 9000, 9250, 9500, 9750, 10000], 8, 5, start_year, years_end)
+    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
+    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
+    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+     
+    # 4.5 x 2.6
+    analyzer.bar_plots_for_checkpoints(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, [1000, 3000, 7000], 1, 3, start_year, years_end)
+    analyzer.bar_plots_for_checkpoints(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, [1000, 3000, 7000], 1, 3, start_year, years_end)
+     
     
