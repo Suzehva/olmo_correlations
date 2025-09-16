@@ -37,9 +37,53 @@ DISPLAY_NAMES = {
 
 # Nice names for model identifiers used in plot titles
 MODEL_DISPLAY_NAMES = {
-    "pythia": "Pythia-1.4b-deduped",
+    "pythia": "Pythia-1.4B-deduped",
+    "EleutherAI_pythia-1b-deduped": "Pythia-1B-deduped",
+    "EleutherAI_pythia-1.4b-deduped": "Pythia-1.4B-deduped",
     "olmo": "OLMo2-1B",
+    "allenai_OLMo-2-0425-1B": "OLMo2-1B",
+    "EleutherAI_pythia-6.9b-deduped": "Pythia-6.9B-deduped",
+    "allenai_OLMo-2-1124-7B": "OLMo2-7B",
+    "meta-llama_Llama-3.1-8B": "LLama3.1-8B",
 }
+# Centralized overrides for training-derived display types
+TRAINING_DERIVED_DISPLAY_TYPES = {"Co-occurrence model", "Exact string match model", "N-gram model"}
+MODEL_CORPUS_OVERRIDES = {
+    "pythia": "The Pile",
+    "EleutherAI_pythia-": "The Pile",
+    "olmo": "OLMo-mix-1124",
+    "allenai_OLMo-": "OLMo-mix-1124",
+}
+
+def get_model_display_name(model_key, data_type):
+    """Resolve the display name for a model, with overrides for training-derived plots.
+    
+    If the plot is for a training-derived distribution, use corpus names instead
+    ("The Pile" for Pythia family, "OLMo-mix-1124" for OLMo family). Otherwise
+    fall back to MODEL_DISPLAY_NAMES.
+    """
+    display_data_type = DISPLAY_NAMES.get(data_type, data_type)
+    base_name = MODEL_DISPLAY_NAMES.get(model_key, str(model_key))
+    if display_data_type in TRAINING_DERIVED_DISPLAY_TYPES:
+        for prefix, corpus_name in MODEL_CORPUS_OVERRIDES.items():
+            if model_key == prefix or model_key.startswith(prefix):
+                return corpus_name
+    return base_name
+
+PROMPT_DISPLAY_NAMES = {
+    "During__year__there":"During [year] there", 
+    "In__year__the_choir":"In [year] the choir", 
+    "In__year__there": "In [year] there", 
+    "In__year__they": "In [year] they", 
+    "In__year_,_at_the_dinner_table,_the_family": "In [year], at the dinner table, the family", 
+    "In__year_,_there": "In [year], there", 
+    "In__year_,_with_a_knife,_he": "In [year], with a knife, he", 
+    "In__year_,_with_a_pen_to_paper,_she": "In [year], with a pen to paper, she", 
+    "In__year_,_with_his_credit_card,_he": "In [year], with his credit card, he", 
+    "In_the_magic_show_in__year_,_there_magically": "In the magic show in [year], there magically",
+}
+
+        
 
 OLMO_CUTOFF = 2024
 OLMO_CHECKPOINTS = list(range(250, 10001, 250))
@@ -52,7 +96,7 @@ EXPERIMENT_TITLE = 'Binary Classification: Past vs (Present + Future)'
 EXPERIMENT_SHORT_NAME = EXPERIMENT_KEY.replace('experiment1_', '')
 
 class AnalyzerClass:
-    def __init__(self, ngram_alpha=1.0):
+    def __init__(self, laplace_alpha=1.0):
         # these all stored per tense (past/present/future), not per verb
         self.olmo_training_data = {}
         # in_year_there_word_counts: saves an entry like past/present/future, only entries if there are occurrences
@@ -75,7 +119,7 @@ class AnalyzerClass:
         self.pythia_relative_ngram = {}
 
         # Smoothing parameter (add-alpha)
-        self.ngram_alpha = ngram_alpha
+        self.laplace_alpha = laplace_alpha
 
         # this is per future/present/past 
         self.olmo_gold_distribution = {} # has entries 0 or 1 for past and future
@@ -95,6 +139,7 @@ class AnalyzerClass:
                 model_prediction_file = f"../olmo_predictions/model_predictions__{prompt_name}/{model_name}/{just_model_name}_all_verbs_predictions.json"
                 with open(model_prediction_file, "r") as f:
                     data = json.load(f)
+                print(f"loaded {model_prediction_file}")
                 year_to_counts_absolute = {}
                 for year in data.keys():
                     if year == "metadata":
@@ -160,30 +205,34 @@ class AnalyzerClass:
 
     def _compute_laplace_smoothed_ngram(self, absolute_counts_per_cp):
         """
-        Build Laplace-smoothed P(tense | year) per checkpoint from absolute counts.
+        Build Laplace-smoothed P(tense | year) per checkpoint from absolute counts,
+        where training-derived counts are treated as binary classes: 'past' and 'future'
+        (with 'future' := present + future).
 
         Args:
             absolute_counts_per_cp: dict[checkpoint -> dict[year(str) -> dict[tense -> count]]]
-            alpha: smoothing parameter (defaults to self.ngram_alpha)
+            alpha: smoothing parameter (defaults to self.laplace_alpha)
 
         Returns:
             dict[checkpoint -> dict[year(str) -> dict[tense -> probability]]]
         """
 
-        tenses = list(set(TENSE_MAPPING.values()))
+        tenses = ["past", "future"]
         vocab_size = len(tenses)
 
         smoothed_per_cp = {}
         for cp, year_map in absolute_counts_per_cp.items():
             year_to_probs = {}
             for year_str, counts in year_map.items():
-                # counts may be empty dict; treat missing as zero
-                year_total = sum(counts.values()) if counts else 0
-                denom = year_total + self.ngram_alpha * vocab_size
-                probs = {}
-                for tense in tenses:
-                    tense_count = counts.get(tense, 0)
-                    probs[tense] = (tense_count + self.ngram_alpha) / denom
+                # Combine present+future into 'future' for smoothing
+                past_count = counts.get("past", 0)
+                future_count = counts.get("future", 0) + counts.get("present", 0)
+                year_total = past_count + future_count
+                denom = year_total + self.laplace_alpha * vocab_size
+                probs = {
+                    "past": (past_count + self.laplace_alpha) / denom,
+                    "future": (future_count + self.laplace_alpha) / denom,
+                }
                 year_to_probs[year_str] = probs
             smoothed_per_cp[cp] = year_to_probs
 
@@ -203,7 +252,7 @@ class AnalyzerClass:
                 'tense_order': TENSE_ORDER,
                 'tense_colors': TENSE_COLORS,
                 'total_years': TOTAL_YEARS,
-                'ngram_alpha': self.ngram_alpha,
+                'laplace_alpha': self.laplace_alpha,
                 'export_timestamp': datetime.now().isoformat(),
             },
             'olmo_training_data': self.olmo_training_data,
@@ -282,7 +331,7 @@ class AnalyzerClass:
             raise ValueError(f"Invalid model: {which_model}")
         
         # Separate storage for each experiment
-        experiment1_losses = {}  # present + future combined
+        experiment1_losses = {}  # present + future combined (training data is already binary)
         years_used = []
         
         for year in range(year_start, year_end + 1):
@@ -294,6 +343,7 @@ class AnalyzerClass:
             
             # Skip years with no data (distributions that sum to zero)
             if sum(dist_data.values()) == 0:
+                if dist_dict == 
                 continue
                 
             # Check minimum sample requirement if raw counts are available
@@ -308,8 +358,12 @@ class AnalyzerClass:
             assert abs(sum(gold_data.values()) - 1) < 1e-6, f"gold_data should sum to 1, got {sum(gold_data.values())}"
             gold_dist = [gold_data["past"], gold_data["future"]]
             
-            # experiment 1: combine present and future tense
-            pred_dist = [dist_data["past"], dist_data["present"] + dist_data["future"]]
+            # experiment 1: combine present and future tense (predictions),
+            # but training-derived inputs are already binary
+            if "present" in dist_data:
+                pred_dist = [dist_data.get("past", 0.0), dist_data.get("present", 0.0) + dist_data.get("future", 0.0)]
+            else:
+                pred_dist = [dist_data.get("past", 0.0), dist_data.get("future", 0.0)]
             
             # Skip if prediction distribution sums to zero
             if sum(pred_dist) == 0:
@@ -377,22 +431,32 @@ class AnalyzerClass:
                 for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1]):
                     year_str = str(year)
                     year_to_counts_absolute[year_str] = {}
-                    year_to_counts_relative[year_str] = {tense: 0.0 for tense in set(TENSE_MAPPING.values())}
+                    # For training-derived data we only store binary classes: past, future(=present+future)
+                    year_to_counts_relative[year_str] = {"past": 0.0, "future": 0.0}
                 
                 # Then process the actual data
                 for year, counts in data[data_source].items():
-                    # Group by tense categories
+                    # Group by tense categories (raw absolute counts)
                     tense_counts_absolute = {}
                     for verb, tense in TENSE_MAPPING.items():
                         if verb in counts:
                             tense_counts_absolute.setdefault(tense, 0)
                             tense_counts_absolute[tense] += counts[verb]
                     
-                    # Use the normalization helper for accurate normalization
-                    tense_counts_relative = self._normalize_tense_distribution(tense_counts_absolute)
+                    # Immediately collapse present+future into 'future'
+                    abs_past = tense_counts_absolute.get("past", 0)
+                    abs_future = tense_counts_absolute.get("future", 0) + tense_counts_absolute.get("present", 0)
+                    combined_absolute = {"past": abs_past, "future": abs_future}
                     
-                    year_to_counts_absolute[year] = tense_counts_absolute
-                    year_to_counts_relative[year] = tense_counts_relative
+                    # Normalize into probabilities over two classes
+                    total = abs_past + abs_future
+                    if total == 0:
+                        combined_relative = {"past": 0.0, "future": 0.0}
+                    else:
+                        combined_relative = {"past": abs_past / total, "future": abs_future / total}
+                    
+                    year_to_counts_absolute[year] = combined_absolute
+                    year_to_counts_relative[year] = combined_relative
 
                 results_relative[cp_num] = year_to_counts_relative
                 results_absolute[cp_num] = year_to_counts_absolute
@@ -492,7 +556,7 @@ class AnalyzerClass:
 
     # --- PLOTTING FUNCTIONS ---
 
-    def bar_plot(self, dist_dict, model, data_type, checkpoint, year_start, year_end):
+    def bar_plot(self, dist_dict, model, data_type, checkpoint, year_start, year_end, combine_present_future=True):
         """Plot stacked bars for a distribution at a specific checkpoint.
         
         Args:
@@ -502,6 +566,7 @@ class AnalyzerClass:
             checkpoint: Checkpoint number
             year_start: Start year (inclusive)
             year_end: End year (inclusive)
+            combine_present_future: If True, group present and future into one bar
         """
         if checkpoint not in dist_dict:
             raise ValueError(f"Checkpoint {checkpoint} not found in {dist_dict}")
@@ -520,24 +585,40 @@ class AnalyzerClass:
                 continue
             filtered_years.append(year_str)
         years = filtered_years
+        
+        # Determine if this is training-derived data (binary past/future)
+        display_data_type = DISPLAY_NAMES.get(data_type, data_type)
+        is_training = display_data_type in TRAINING_DERIVED_DISPLAY_TYPES
             
-        tenses = [t for t in TENSE_ORDER if t in set(TENSE_MAPPING.values())]
+        if not is_training and combine_present_future:
+            tenses = ["past", "present+future"]
+            color_map = {"past": TENSE_COLORS["past"], "present+future": TENSE_COLORS["present"]}
+        elif is_training:
+            tenses = ["past", "future"]
+            color_map = {"past": TENSE_COLORS["past"], "future": TENSE_COLORS["future"]}
+        else:
+            tenses = [t for t in TENSE_ORDER if t in set(TENSE_MAPPING.values())]
+            color_map = TENSE_COLORS
         
         # Plot
-        fig, ax = plt.subplots(figsize=(6, 3))
+        fig, ax = plt.subplots(figsize=(5.2, 3))
         bottom = np.zeros(len(years))
         
         for tense in tenses:
-            vals = np.array([cp_data[y].get(tense, 0) for y in years])
+            if tense == "present+future":
+                vals = np.array([cp_data[y].get("present", 0) + cp_data[y].get("future", 0) for y in years])
+            else:
+                vals = np.array([cp_data[y].get(tense, 0) for y in years])
             ax.bar(range(len(years)), vals, bottom=bottom, 
-                  label=tense.title(), color=TENSE_COLORS[tense], width=1.0)
+                  label=tense.title(), color=color_map[tense], width=1.0)
             bottom += vals
         
         # Format
-        display_data_type = DISPLAY_NAMES.get(data_type, data_type)
-        model_display = MODEL_DISPLAY_NAMES.get(model, str(model))
+        model_display = get_model_display_name(model, data_type)
         title = f"{model_display} — {display_data_type}"
         safe_data_type = data_type.replace(' ', '_')
+        if (not is_training) and combine_present_future:
+            safe_data_type = f"{safe_data_type}_present_future"
         filename = f"{model}_checkpoint{checkpoint}_{safe_data_type}_{year_start}-{year_end}"
         
         ax.set_title(title)
@@ -613,8 +694,13 @@ class AnalyzerClass:
                 filtered_years.append(year_str)
             years = filtered_years
 
+            # Determine if this is training-derived data (binary past/future)
+            display_data_type = DISPLAY_NAMES.get(data_type, data_type)
+            is_training = display_data_type in TRAINING_DERIVED_DISPLAY_TYPES
+            local_tenses = ["past", "future"] if is_training else tenses
+
             bottom = np.zeros(len(years))
-            for tense in tenses:
+            for tense in local_tenses:
                 vals = np.array([cp_data[y].get(tense, 0) for y in years])
                 ax.bar(range(len(years)), vals, bottom=bottom,
                        label=tense.title() if idx == 0 else "",
@@ -623,7 +709,7 @@ class AnalyzerClass:
 
             # Format subplot
             display_data_type = DISPLAY_NAMES.get(data_type, data_type)
-            model_display = MODEL_DISPLAY_NAMES.get(model, str(model))
+            model_display = get_model_display_name(model, data_type)
             ax.set_title(f"{model_display} — {display_data_type} | Checkpoint {cp}", fontsize=10)
             tick_step = max(1, len(years) // 20)
             ax.set_xticks(range(0, len(years), tick_step))
@@ -640,7 +726,7 @@ class AnalyzerClass:
             axes[idx].set_visible(False)
 
         # Add a single legend for the whole figure
-        fig.legend([t.title() for t in tenses], loc='upper center', bbox_to_anchor=(0.5, 0.02), ncol=len(tenses), fontsize=12)
+        fig.legend([t.title() for t in (local_tenses if 'local_tenses' in locals() else tenses)], loc='upper center', bbox_to_anchor=(0.5, 0.02), ncol=len(local_tenses if 'local_tenses' in locals() else tenses), fontsize=12)
 
         plt.tight_layout()
         plt.subplots_adjust(bottom=0.12)
@@ -676,7 +762,7 @@ def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=19
     exp_key = EXPERIMENT_KEY
     exp_title = EXPERIMENT_TITLE
     
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(3, 2))
     
     all_years_plotted = []
     all_losses_plotted = []
@@ -705,7 +791,7 @@ def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=19
             
             ax.scatter(years, losses, 
                       label=f"{label} (avg: {avg_display}, num_years: {len(years)})", 
-                      color=color, s=20, alpha=0.7)  # Increased alpha for visibility
+                      color=color, s=20, alpha=0.7)
             
             # Collect all plotted data for axis limits
             all_years_plotted.extend(years)
@@ -716,8 +802,9 @@ def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=19
     # Format the plot
     ax.set_xlabel('Year', fontsize=12)
     ax.set_ylabel('Cross-Entropy Loss', fontsize=12)
-    ax.set_title(f"{model_name.upper()} - {exp_title}\nYears {year_start}-{year_end}", fontsize=14)
-    ax.legend(bbox_to_anchor=(1.05, 1), loc='upper left')
+    model_display = MODEL_DISPLAY_NAMES.get(model_name, str(model_name))
+    ax.set_title(f"{model_display} — {exp_title}", fontsize=14)
+    ax.legend(loc='lower left')
     ax.grid(True, alpha=0.3)
     
     # Use linear scale for y-axis to show zero values
@@ -727,6 +814,15 @@ def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=19
     if all_years_plotted and all_losses_plotted:
         # X-axis: set to requested range with some padding
         ax.set_xlim(year_start - 5, year_end + 5)
+        # Decade x-ticks with fallback
+        decade_start = (year_start // 10) * 10
+        decade_end = (year_end // 10) * 10
+        tick_years = list(range(decade_start, decade_end + 1, 10))
+        if tick_years:
+            ax.set_xticks(tick_years)
+        else:
+            step = max(1, (year_end - year_start) // 20)
+            ax.set_xticks(list(range(year_start, year_end + 1, step)))
         
         # Y-axis: set based on actual data with some padding
         y_min, y_max = min(all_losses_plotted), max(all_losses_plotted)
@@ -1173,7 +1269,7 @@ if __name__ == "__main__":
     filepath = analyzer.save_all_data_to_file()
     print(f"Data export completed. File saved: {filepath}")
 
-    if True:
+    if False:
         # plot_training_data
         analyzer.bar_plot(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", cp, start_year, years_end)
         analyzer.bar_plot(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", "in_year_there_word_counts", cp, start_year, years_end)
@@ -1188,25 +1284,28 @@ if __name__ == "__main__":
         analyzer.bar_plot(analyzer.pythia_relative_predictions, "pythia", "Next-token predictions", cp, start_year, years_end)
 
 
-        # plot_model_predictions absolute with other models
+        # plot_model_predictions absolute with other models (present and future separate)
         model_names = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1b-deduped", "EleutherAI_pythia-1.4b-deduped","EleutherAI_pythia-6.9b-deduped", "allenai_OLMo-2-1124-7B", "meta-llama_Llama-3.1-8B"]
         model_name_to_predictions = analyzer.load_other_model_predictions(model_names)
         for model_name in model_names:
-            analyzer.bar_plot(model_name_to_predictions[model_name], model_name, "Next-token predictions", "final", start_year, years_end)
+            analyzer.bar_plot(model_name_to_predictions[model_name], model_name, "Next-token predictions", "final", start_year, years_end, combine_present_future=False)
 
-        # plot other prompts for pythia and olmo
-        prompt_names = [
-            "During__year__there", "In__year__the_choir", "In__year__there", 
-            "In__year__they", "In__year_,_at_the_dinner_table,_the_family", 
-            "In__year_,_there", "In__year_,_with_a_knife,_he", "In__year_,_with_a_pen_to_paper,_she", 
-            "In__year_,_with_his_credit_card,_he", "In_the_magic_show_in__year_,_there_magically",
-        ]
-        prompt_to_model_to_predictions = analyzer.load_other_prompts(prompt_names)
-        for prompt, model_to_pred in prompt_to_model_to_predictions.items():
-            for model_name, pred in model_to_pred.items():
-                analyzer.bar_plot(prompt_to_model_to_predictions[prompt][model_name], model_name, f"Next-token predictions __{prompt}", "final", start_year, years_end)
+        # DOESN'T WORK YET
+        # # plot other prompts for pythia and olmo
+        # prompt_names = [
+        #     # "During__year__there", "In__year__the_choir", "In__year__there", 
+        #     # "In__year__they", "In__year_,_at_the_dinner_table,_the_family", 
+        #     # "In__year_,_there", "In__year_,_with_a_knife,_he", "In__year_,_with_a_pen_to_paper,_she", 
+        #     "In__year_,_with_his_credit_card,_he", 
+        #     # "In_the_magic_show_in__year_,_there_magically",
+        # ]
+        # prompt_to_model_to_predictions = analyzer.load_other_prompts(prompt_names)
+        # for prompt, model_to_pred in prompt_to_model_to_predictions.items():
+        #     pretty_prompt = PROMPT_DISPLAY_NAMES.get(prompt, prompt)
+        #     for model_name, pred in model_to_pred.items():
+        #         analyzer.bar_plot(prompt_to_model_to_predictions[prompt][model_name], model_name, f"Next-token predictions — {pretty_prompt}", "final", start_year, years_end)
 
-    else:
+    if True:
         # compute_cross_entropies
         olmo_predictions_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_predictions, "olmo", cp, start_year, years_end)
         olmo_string_match_ce = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_training_data["in_year_there_word_counts"], "olmo", cp, start_year, years_end)
@@ -1222,6 +1321,7 @@ if __name__ == "__main__":
         plot_cross_entropies([pythia_predictions_ce, pythia_ngram_ce, pythia_co_occurrence_ce], ["Next-token predictions", "N-gram model", "Co-occurrence model"], "pythia")
         plot_cross_entropies([pythia_string_match_ce], ["Exact string match model"], "pythia")
 
+    else:
         # plot_training_dynamics
         analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_predictions, "olmo", "Next-token Predictions", [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500, 7750, 8000, 8250, 8500, 8750, 9000, 9250, 9500, 9750, 10000], 8, 5, start_year, years_end)
         analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
