@@ -420,7 +420,34 @@ class AnalyzerClass:
         plt.close()
         print(f"Saved: {save_path}")
 
-    def compute_cross_entropy_over_range(self, dist_dict, model, checkpoint, year_start, year_end):
+    def collect_years_with_no_data(self, dist_dict, checkpoint, year_start, year_end, model_name=""):
+        """Print which years have no data in the given distribution dictionary.
+        
+        Args:
+            dist_dict: Dictionary containing distribution data
+            checkpoint: Checkpoint number to examine
+            year_start: Start year (inclusive)
+            year_end: End year (inclusive)
+            model_name: Optional name for clearer output
+        """
+        if checkpoint not in dist_dict:
+            print(f"Checkpoint {checkpoint} not found in distribution for {model_name}")
+            return
+        
+        cp_data = dist_dict[checkpoint]
+        years_with_no_data = []
+        
+        for year in range(year_start, year_end + 1):
+            year_str = str(year)
+            
+            year_data = cp_data[year_str]
+            total = sum(year_data.values())
+            if total == 0:
+                years_with_no_data.append(year)
+        
+        return years_with_no_data
+
+    def compute_cross_entropy_over_range(self, dist_dict, model, checkpoint, year_start, year_end, allow_missing_data=False, specific_years=None):
         """Compute cross-entropy loss between model predictions and gold labels.
         
         Args:
@@ -429,9 +456,11 @@ class AnalyzerClass:
             checkpoint: Checkpoint number
             year_start: Start year (inclusive)
             year_end: End year (inclusive)
+            allow_missing_data: If True, skip years with no data instead of raising errors
+            specific_years: Optional list of specific years to compute CE for (overrides year_start/year_end range)
             
         Returns:
-            Dictionary with cross-entropy results
+            Dictionary with cross-entropy results including years_used
         """
         if checkpoint not in dist_dict:
             raise ValueError(f"Checkpoint {checkpoint} not found in {dist_dict}")
@@ -450,8 +479,15 @@ class AnalyzerClass:
         dist_cp = normalized_dist_dict[checkpoint]
         
         losses = {}
+        years_used = []
         
-        for year in range(year_start, year_end + 1):
+        # Use specific years if provided, otherwise use the range
+        if specific_years is not None:
+            years_to_process = specific_years
+        else:
+            years_to_process = range(year_start, year_end + 1)
+        
+        for year in years_to_process:
             year_str = str(year)
             
             # Skip cutoff year
@@ -460,14 +496,17 @@ class AnalyzerClass:
                 continue
                 
             if year_str not in gold_cp:
-                print(f"Skipping year {year_str} because it's not in gold_cp")
                 continue
                 
+            if year_str not in dist_cp:
+                continue
             pred_data = dist_cp[year_str]
             gold_data = gold_cp[year_str]
             
             # Skip years with no prediction data
             if sum(pred_data.values()) == 0:
+                if allow_missing_data:
+                    continue
                 raise ValueError(f"No prediction data for year {year_str}")
             
             # Convert to past vs future binary classification (new structure only)
@@ -476,6 +515,13 @@ class AnalyzerClass:
             
             gold_past = gold_data["past"]
             gold_future = gold_data["presfut"]
+            
+            # Skip cases where predictions and gold are completely unrelated
+            # (pred=1 for one class, gold=1 for the other class)
+            if allow_missing_data:
+                if ((pred_past == 1.0 and gold_past == 0.0) or 
+                    (pred_future == 1.0 and gold_future == 0.0)):
+                    continue
             
             # Compute cross-entropy: -sum(target * log(pred))
             epsilon = 1e-12  # Avoid log(0)
@@ -487,23 +533,27 @@ class AnalyzerClass:
                 ce_loss = 0.0
             
             if not np.isfinite(ce_loss):
+                if allow_missing_data:
+                    continue
                 raise ValueError(f"Invalid cross-entropy loss for year {year_str}: {ce_loss}")
             
             losses[year_str] = ce_loss
+            years_used.append(year_str)
         
         # Compute average loss
         avg_loss = sum(losses.values()) / len(losses)
         
         # Sanity check: print sample data for year 1950 if it exists
-        if "1950" in losses and "1950" in dist_cp and "1950" in gold_cp:
-            print(f"Sanity check for {model} checkpoint {checkpoint}, year 1950:")
-            print(f"  Normalized predictions: {dist_cp['1950']}")
-            print(f"  Gold distribution: {gold_cp['1950']}")
-            print(f"  Cross-entropy loss: {losses['1950']}")
+        # if "1950" in losses and "1950" in dist_cp and "1950" in gold_cp:
+        #     print(f"Sanity check for {model} checkpoint {checkpoint}, year 1950:")
+        #     print(f"  Normalized predictions: {dist_cp['1950']}")
+        #     print(f"  Gold distribution: {gold_cp['1950']}")
+        #     print(f"  Cross-entropy loss: {losses['1950']}")
         
         return {
             'per_year_losses': losses,
             'average_loss': avg_loss,
+            'years_used': years_used,
         }
 
 
@@ -515,6 +565,7 @@ if __name__ == "__main__":
 
     analyzer = AnalyzerClass()
 
+    
     # filepath = analyzer.save_all_data_to_file()
     # print(f"Data export completed. File saved: {filepath}")
 
@@ -537,18 +588,38 @@ if __name__ == "__main__":
 
     # compute losses for 10k checkpoint
     olmo_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_predictions, "olmo", cp, start_year, years_end)
-    pythia_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_predictions, "pythia", cp, start_year, years_end)
     olmo_co_occurrence_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_co_occurrence, "olmo", cp, start_year, years_end)
-    pythia_co_occurrence_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_co_occurrence, "pythia", cp, start_year, years_end)
     olmo_ngram_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_ngram, "olmo", cp, start_year, years_end)
-    pythia_ngram_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_ngram, "pythia", cp, start_year, years_end)
-    # print summary of average losses for 10k checkpoint
+    olmo_exact_string_match_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_exact_string_match, "olmo", cp, start_year, years_end, allow_missing_data=True)
     print(f"Olmo predictions average loss: {olmo_pred_loss['average_loss']}")
-    print(f"Pythia predictions average loss: {pythia_pred_loss['average_loss']}")
     print(f"Olmo co-occurrence average loss: {olmo_co_occurrence_loss['average_loss']}")
-    print(f"Pythia co-occurrence average loss: {pythia_co_occurrence_loss['average_loss']}")
     print(f"Olmo n-gram average loss: {olmo_ngram_loss['average_loss']}")
-    print(f"Pythia n-gram average loss: {pythia_ngram_loss['average_loss']}")
+    print(f"Olmo exact string match average loss (years used: {len(olmo_exact_string_match_loss['years_used'])}): {olmo_exact_string_match_loss['average_loss']}")
     print("--------------------------------")
+    
+    pythia_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_predictions, "pythia", cp, start_year, years_end)
+    pythia_co_occurrence_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_co_occurrence, "pythia", cp, start_year, years_end)
+    pythia_ngram_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_ngram, "pythia", cp, start_year, years_end)
+    pythia_exact_string_match_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_exact_string_match, "pythia", cp, start_year, years_end, allow_missing_data=True)
+    print(f"Pythia predictions average loss: {pythia_pred_loss['average_loss']}")
+    print(f"Pythia co-occurrence average loss: {pythia_co_occurrence_loss['average_loss']}")
+    print(f"Pythia n-gram average loss: {pythia_ngram_loss['average_loss']}")
+    print(f"Pythia exact string match average loss (years used: {len(pythia_exact_string_match_loss['years_used'])}): {pythia_exact_string_match_loss['average_loss']}")
+    print("--------------------------------")
+    # print summary of average losses for 10k checkpoint
+    olmo_exact_str_years = analyzer.collect_years_with_no_data(analyzer.olmo_exact_string_match, cp, start_year, years_end, "OLMo exact string match")
+    olmo_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_predictions, "olmo", cp, start_year, years_end, specific_years=olmo_exact_str_years)
+    print(f"Olmo predictions average loss (years used: {len(olmo_exact_str_years)}): {olmo_pred_loss['average_loss']}")
+    print("--------------------------------")
+    
+    # print summary of loss if only using ones frome xact string match for each metods
+    pythia_exact_str_years = analyzer.collect_years_with_no_data(analyzer.pythia_exact_string_match, cp, start_year, years_end, "Pythia exact string match")
+    pythia_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_predictions, "pythia", cp, start_year, years_end, specific_years=pythia_exact_str_years)
+    print(f"Pythia predictions average loss (years used: {len(pythia_exact_str_years)}): {pythia_pred_loss['average_loss']}")
+    print("--------------------------------")
+    
+    
+    
+
 
     
