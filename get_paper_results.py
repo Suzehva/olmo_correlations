@@ -24,22 +24,26 @@ TENSES = list(set(TENSE_MAPPING.values()))
 TENSE_ORDER = ["past", "presfut"]
 TENSE_COLORS = {"past": "orange", "future": "green", "present": "#4b0082", "presfut": "#4b0082"}
 
-# Display names for data types used in plotting
-DISPLAY_NAMES = {
-    "in_year_tense_sentence_counts": "Co-occurrence model",
-    "in_year_there_word_counts": "Exact string match model",
-    "Laplace-smoothed n-gram": "N-gram model",
-    "Next-token predictions": "Next-token predictions",
-}
 
-# Model display names for plot titles
+
 MODEL_DISPLAY_NAMES = {
     "pythia": "Pythia-1.4B-deduped",
+    "EleutherAI_pythia-1b-deduped": "Pythia-1B-deduped",
+    "EleutherAI_pythia-1.4b-deduped": "Pythia-1.4B-deduped",
     "olmo": "OLMo2-1B",
+    "allenai_OLMo-2-0425-1B": "OLMo2-1B",
+    "EleutherAI_pythia-6.9b-deduped": "Pythia-6.9B-deduped",
+    "allenai_OLMo-2-1124-7B": "OLMo2-7B",
+    "meta-llama_Llama-3.1-8B": "LLama3.1-8B",
 }
 
 # Training-derived data types that should show corpus names instead of model names
-TRAINING_DERIVED_DISPLAY_TYPES = {"Co-occurrence model", "Exact string match model", "N-gram model"}
+CO_OCCURR_NAME = "Co-occurrence model"
+EXACT_STRING_MATCH_NAME = "Exact string match model"
+NGRAM_NAME = "N-gram model"
+NEXT_TOKEN_NAME = "Next-token predictions"
+TRAINING_DERIVED_DISPLAY_TYPES = {CO_OCCURR_NAME, EXACT_STRING_MATCH_NAME, NGRAM_NAME}
+
 MODEL_CORPUS_OVERRIDES = {
     "pythia": "The Pile",
     "olmo": "OLMo-mix-1124",
@@ -47,7 +51,7 @@ MODEL_CORPUS_OVERRIDES = {
 
 def get_model_display_name(model_key, data_type):
     """Resolve the display name for a model, with overrides for training-derived plots."""
-    display_data_type = DISPLAY_NAMES.get(data_type, data_type)
+    display_data_type = data_type
     if display_data_type in TRAINING_DERIVED_DISPLAY_TYPES:
         return MODEL_CORPUS_OVERRIDES.get(model_key, model_key)
     return MODEL_DISPLAY_NAMES.get(model_key, model_key)
@@ -67,7 +71,7 @@ class AnalyzerClass:
         self.pythia_training_data = {}
         self.pythia_predictions = {} 
 
-        # Laplace-smoothed n-gram distributions derived from in_year_there_word_counts
+        # N-gram model distributions derived from in_year_there_word_counts
         self.olmo_relative_ngram = {}
         self.pythia_relative_ngram = {}
         self.laplace_alpha = 1.0
@@ -78,13 +82,13 @@ class AnalyzerClass:
 
 
         print("loading olmo in_year_there_word_counts ") # always has past or presfut entries
-        self.olmo_training_data["in_year_there_word_counts"] = self.load_training_data(OLMO_TRAINING_DATA_STRING_MATCHING, "in_year_there_word_counts", 250)
+        self.olmo_exact_string_match = self.load_training_data(OLMO_TRAINING_DATA_STRING_MATCHING, "in_year_there_word_counts", 250)
         print("loading olmo in_year_tense_sentence_counts") # always has past or presfut entries
-        self.olmo_training_data["in_year_tense_sentence_counts"] = self.load_training_data(OLMO_TRAINING_DATA_CO_OCCURRENCE, "in_year_tense_sentence_counts", 250)
+        self.olmo_co_occurrence = self.load_training_data(OLMO_TRAINING_DATA_CO_OCCURRENCE, "in_year_tense_sentence_counts", 250)
         print("loading pythia in_year_there_word_counts") # always has past or presfut entries
-        self.pythia_training_data["in_year_there_word_counts"] = self.load_training_data(PYTHIA_TRAINING_DATA, "in_year_there_word_counts", 1000)
+        self.pythia_exact_string_match = self.load_training_data(PYTHIA_TRAINING_DATA, "in_year_there_word_counts", 1000)
         print("loading pythia in_year_tense_sentence_counts") # always has past or presfut entries
-        self.pythia_training_data["in_year_tense_sentence_counts"] = self.load_training_data(PYTHIA_TRAINING_DATA, "in_year_tense_sentence_counts", 1000)
+        self.pythia_co_occurrence = self.load_training_data(PYTHIA_TRAINING_DATA, "in_year_tense_sentence_counts", 1000)
         print("loading olmo predictions") 
         self.olmo_predictions = self.load_model_predictions(OLMO_PREDICTIONS_FILE, OLMO_CHECKPOINTS)
         print("loading pythia predictions")
@@ -93,10 +97,13 @@ class AnalyzerClass:
         self.populate_gold_data()
 
         print("loading olmo relative ngram") # always has past or presfut entries, add to 1.0; missing cutoff year
-        self.olmo_relative_ngram = self._compute_laplace_smoothed_ngram(self.olmo_training_data["in_year_there_word_counts"])
+        self.olmo_relative_ngram = self._compute_laplace_smoothed_ngram(self.olmo_exact_string_match)
         print("loading pythia relative ngram") # always has past or presfut entries, add to 1.0; missing cutoff year
-        self.pythia_relative_ngram = self._compute_laplace_smoothed_ngram(self.pythia_training_data["in_year_there_word_counts"])
+        self.pythia_relative_ngram = self._compute_laplace_smoothed_ngram(self.pythia_exact_string_match)
         print("finished loading all data")
+
+        model_names = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1b-deduped", "EleutherAI_pythia-1.4b-deduped","EleutherAI_pythia-6.9b-deduped", "allenai_OLMo-2-1124-7B", "meta-llama_Llama-3.1-8B"]
+        self.other_model_predictions = self.load_other_model_predictions(model_names)
 
 
 
@@ -127,12 +134,62 @@ class AnalyzerClass:
                     # Group by tense categories (raw absolute counts)
                     tense_counts_absolute = year_to_counts_absolute[year]
                     for verb, tense in TENSE_MAPPING.items():
-                        if verb in counts_per_verb: # in_year_there_word_counts only has entries if there are occurrences so we need this statement
+                        if verb in counts_per_verb: # exact string match only has entries if there are occurrences so we need this statement
                             year_to_counts_absolute[year][tense] += counts_per_verb[verb]
                     year_to_counts_absolute[year] = tense_counts_absolute
 
                 results_absolute[cp_num] = year_to_counts_absolute
             return results_absolute
+
+    def load_other_model_predictions(self, model_names):
+        """Load predictions from other models with separate present and future tenses (not combined as presfut)."""
+        model_name_to_predictions = {}
+        # Hardcoded tense mapping for other models - keep present and future separate
+        OTHER_MODEL_TENSE_MAPPING = {
+            "was": "past",
+            "were": "past", 
+            "is": "present",
+            "are": "present",
+            "will": "future",
+        }
+        
+        for model_name in model_names:
+            print(f"Loading predictions for {model_name}")
+            just_model_name = model_name.split("_")[-1]
+            model_prediction_file = f"../olmo_predictions/model_predictions__In__year__there/{model_name}/{just_model_name}_predictions.json"
+            
+            if not os.path.exists(model_prediction_file):
+                raise FileNotFoundError(f"could not find {model_prediction_file}")
+                
+            with open(model_prediction_file, "r") as f:
+                data = json.load(f)
+
+            year_to_counts_absolute = {}
+            
+            # Initialize all years with zero counts for past, present, future
+            for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1]):
+                year_to_counts_absolute[str(year)] = {
+                    "past": 0,
+                    "present": 0,
+                    "future": 0,
+                }
+            
+            # Process the actual data
+            for year in data.keys():
+                if year == "metadata":
+                    continue
+                verb_count_dict = data[year]["absolute"]
+                # Remove leading spaces from verb keys
+                verb_count_dict_cleaned = {k.strip(): v for k, v in verb_count_dict.items()}
+                
+                for verb, tense in OTHER_MODEL_TENSE_MAPPING.items():
+                    if verb in verb_count_dict_cleaned:
+                        year_to_counts_absolute[year][tense] += verb_count_dict_cleaned[verb]
+
+            # Store with "final" checkpoint key to match the expected format
+            model_name_to_predictions[model_name] = {"final": year_to_counts_absolute}
+        
+        return model_name_to_predictions
 
     def load_model_predictions(self, file_template, checkpoints):
         results_absolute = {}
@@ -249,7 +306,7 @@ class AnalyzerClass:
         """Generate folder name for saving plots."""
         return f"{model}_checkpoint{checkpoint}"
     
-    def _make_relative_distributions(self, dist_dict):
+    def _make_relative_distributions(self, dist_dict, separate_present_future=False):
         """Convert absolute counts to relative distributions (probabilities that sum to 1)."""
         relative_dict = {}
         for cp, year_data in dist_dict.items():
@@ -260,10 +317,13 @@ class AnalyzerClass:
                     relative_dict[cp][year] = {tense: count/total for tense, count in tense_counts.items()}
                 else:
                     # If no data, keep as zeros (don't artificially split)
-                    relative_dict[cp][year] = {tense: 0.0 for tense in TENSE_ORDER}
+                    if separate_present_future:
+                        relative_dict[cp][year] = {"past": 0.0, "present": 0.0, "future": 0.0}
+                    else:
+                        relative_dict[cp][year] = {tense: 0.0 for tense in TENSE_ORDER}
         return relative_dict
 
-    def bar_plot(self, dist_dict, model, data_type, checkpoint, year_start, year_end, make_relative=True):
+    def bar_plot(self, dist_dict, model, data_type, checkpoint, year_start, year_end, make_relative=True, separate_present_future=False):
         """Plot stacked bars for a distribution at a specific checkpoint.
         Adapted for the new tense structure using 'past' and 'presfut'.
         
@@ -275,13 +335,14 @@ class AnalyzerClass:
             year_start: Start year (inclusive)
             year_end: End year (inclusive)
             make_relative: If True, convert counts to probabilities that sum to 1
+            separate_present_future: If True, plot past/present/future separately instead of past/presfut
         """
         if checkpoint not in dist_dict:
             raise ValueError(f"Checkpoint {checkpoint} not found in {dist_dict}")
         
         # Convert to relative distributions if requested
         if make_relative:
-            dist_dict = self._make_relative_distributions(dist_dict)
+            dist_dict = self._make_relative_distributions(dist_dict, separate_present_future)
         
         output_dir = self._get_folder_name(model, checkpoint, data_type)
         Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -302,14 +363,22 @@ class AnalyzerClass:
         fig, ax = plt.subplots(figsize=(5.2, 3))
         bottom = np.zeros(len(years))
         
-        for tense in TENSE_ORDER:
+        # Determine tense order and colors based on separate_present_future flag
+        if separate_present_future:
+            tense_order = ["past", "present", "future"]
+            tense_colors = {"past": "orange", "present": "#4b0082", "future": "green"}
+        else:
+            tense_order = TENSE_ORDER
+            tense_colors = TENSE_COLORS
+        
+        for tense in tense_order:
             vals = np.array([cp_data[y].get(tense, 0) for y in years])
             ax.bar(range(len(years)), vals, bottom=bottom, 
-                  label=tense.title(), color=TENSE_COLORS[tense], width=1.0)
+                  label=tense.title(), color=tense_colors[tense], width=1.0)
             bottom += vals
         
         # Format - using same logic as kl_divergence_checkpoints.py but simplified
-        display_data_type = DISPLAY_NAMES.get(data_type, data_type)
+        display_data_type = data_type
         model_display = get_model_display_name(model, data_type)
         
         title = f"{model_display} — {display_data_type}"
@@ -340,7 +409,81 @@ class AnalyzerClass:
         plt.savefig(save_path, dpi=600)
         plt.close()
         print(f"Saved: {save_path}")
+
+    def compute_cross_entropy_over_range(self, dist_dict, model, checkpoint, year_start, year_end):
+        """Compute cross-entropy loss between model predictions and gold labels.
         
+        Args:
+            dist_dict: Dictionary containing distribution data (probabilities that sum to 1)
+            model: Model name ("olmo" or "pythia")
+            checkpoint: Checkpoint number
+            year_start: Start year (inclusive)
+            year_end: End year (inclusive)
+            
+        Returns:
+            Dictionary with cross-entropy results
+        """
+        if checkpoint not in dist_dict:
+            raise ValueError(f"Checkpoint {checkpoint} not found in {dist_dict}")
+        
+        # Get gold distribution for this model
+        if model == "olmo":
+            gold_cp = self.olmo_relative_gold_distribution[checkpoint]
+        elif model == "pythia":
+            gold_cp = self.pythia_relative_gold_distribution[checkpoint]
+        else:
+            raise ValueError(f"Invalid model: {model}")
+        
+        dist_cp = dist_dict[checkpoint]
+        losses = {}
+        
+        for year in range(year_start, year_end + 1):
+            year_str = str(year)
+            
+            # Skip cutoff year
+            if ((model == "olmo" and year == OLMO_CUTOFF) or 
+                (model == "pythia" and year == PYTHIA_CUTOFF)):
+                continue
+                
+            if year_str not in gold_cp:
+                print(f"Skipping year {year_str} because it's not in gold_cp")
+                continue
+                
+            pred_data = dist_cp[year_str]
+            gold_data = gold_cp[year_str]
+            
+            # Skip years with no prediction data
+            if sum(pred_data.values()) == 0:
+                raise ValueError(f"No prediction data for year {year_str}")
+            
+            # Convert to past vs future binary classification (new structure only)
+            pred_past = pred_data["past"]
+            pred_future = pred_data["presfut"]
+            
+            gold_past = gold_data["past"]
+            gold_future = gold_data["future"]
+            
+            # Compute cross-entropy: -sum(target * log(pred))
+            epsilon = 1e-12  # Avoid log(0)
+            ce_loss = -(gold_past * np.log(pred_past + epsilon) + 
+                       gold_future * np.log(pred_future + epsilon))
+            
+            # Handle floating-point precision errors
+            if ce_loss < 0 and abs(ce_loss) < 1e-10:
+                ce_loss = 0.0
+            
+            if not np.isfinite(ce_loss):
+                raise ValueError(f"Invalid cross-entropy loss for year {year_str}: {ce_loss}")
+            
+            losses[year_str] = ce_loss
+        
+        # Compute average loss
+        avg_loss = sum(losses.values()) / len(losses)
+        
+        return {
+            'per_year_losses': losses,
+            'average_loss': avg_loss,
+        }
 
 
 if __name__ == "__main__":
@@ -353,18 +496,30 @@ if __name__ == "__main__":
     filepath = analyzer.save_all_data_to_file()
     print(f"Data export completed. File saved: {filepath}")
 
+
     # plot_training_data
-    analyzer.bar_plot(analyzer.olmo_training_data["in_year_tense_sentence_counts"], "olmo", "in_year_tense_sentence_counts", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.olmo_training_data["in_year_there_word_counts"], "olmo", "in_year_there_word_counts", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_training_data["in_year_tense_sentence_counts"], "pythia", "in_year_tense_sentence_counts", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_training_data["in_year_there_word_counts"], "pythia", "in_year_there_word_counts", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", "Laplace-smoothed n-gram", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", "Laplace-smoothed n-gram", cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.olmo_exact_string_match, "olmo", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.pythia_exact_string_match, "pythia", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, cp, start_year, years_end)
 
     # plot_model_predictions
-    analyzer.bar_plot(analyzer.olmo_predictions, "olmo", "Next-token predictions", cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_predictions, "pythia", "Next-token predictions", cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, cp, start_year, years_end)
 
+    # plot_model_predictions with other models
+    for model_name in analyzer.other_model_predictions.keys():
+        analyzer.bar_plot(analyzer.other_model_predictions[model_name], model_name, NEXT_TOKEN_NAME, "final", start_year, years_end, make_relative=False, separate_present_future=True)
+
+
+    # compute losses
+    olmo_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_predictions, "olmo", cp, start_year, years_end)
+    pythia_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_predictions, "pythia", cp, start_year, years_end)
+    olmo_co_occurrence_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_co_occurrence, "olmo", cp, start_year, years_end)
+    pythia_co_occurrence_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_co_occurrence, "pythia", cp, start_year, years_end)
+    olmo_ngram_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_ngram, "olmo", cp, start_year, years_end)
+    pythia_ngram_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_ngram, "pythia", cp, start_year, years_end)
 
     
-
