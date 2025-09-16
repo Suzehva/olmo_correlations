@@ -90,9 +90,9 @@ class AnalyzerClass:
         print("loading pythia in_year_tense_sentence_counts") # always has past or presfut entries
         self.pythia_co_occurrence = self.load_training_data(PYTHIA_TRAINING_DATA, "in_year_tense_sentence_counts", 1000)
         print("loading olmo predictions") 
-        self.olmo_predictions = self.load_model_predictions(OLMO_PREDICTIONS_FILE, OLMO_CHECKPOINTS)
+        self.olmo_predictions = self.load_model_predictions(OLMO_PREDICTIONS_FILE, OLMO_CHECKPOINTS) # UP TO CHECKPOINT 10000; OUR OWN MODEL
         print("loading pythia predictions")
-        self.pythia_predictions = self.load_model_predictions(PYTHIA_PREDICTIONS_FILE, PYTHIA_CHECKPOINTS)
+        self.pythia_predictions = self.load_model_predictions(PYTHIA_PREDICTIONS_FILE, PYTHIA_CHECKPOINTS) # UP TO CHECKPOINT 10000; NOT OUR MODEL
         print("populating gold data")
         self.populate_gold_data()
 
@@ -104,6 +104,9 @@ class AnalyzerClass:
 
         model_names = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1b-deduped", "EleutherAI_pythia-1.4b-deduped","EleutherAI_pythia-6.9b-deduped", "allenai_OLMo-2-1124-7B", "meta-llama_Llama-3.1-8B"]
         self.other_model_predictions = self.load_other_model_predictions(model_names)
+        print("--------------------------------")
+        print("finished loading all data")
+        print("--------------------------------")
 
 
 
@@ -237,9 +240,9 @@ class AnalyzerClass:
             for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1]):
                 year_dist = {}
                 if year < cutoff:
-                    year_dist = {"past": 1.0, "future": 0.0}
+                    year_dist = {"past": 1.0, "presfut": 0.0}
                 if year > cutoff:
-                    year_dist = {"past": 0.0, "future": 1.0}
+                    year_dist = {"past": 0.0, "presfut": 1.0}
                 if year == cutoff:
                     continue
                 gold_per_year[str(year)] = year_dist
@@ -348,6 +351,11 @@ class AnalyzerClass:
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         cp_data = dist_dict[checkpoint]
+        
+        # Assert that distributions sum to 1 (with small tolerance for floating point errors)
+        for year_str, year_data in cp_data.items():
+            total = sum(year_data.values())
+            assert abs(total - 1.0) < 1e-6 or total == 0.0, f"Distribution for year {year_str} sums to {total}, not 1.0: {year_data}"
         all_years = sorted(cp_data.keys())
         
         # Filter years based on year_start and year_end
@@ -373,8 +381,10 @@ class AnalyzerClass:
         
         for tense in tense_order:
             vals = np.array([cp_data[y].get(tense, 0) for y in years])
+            # Use "Present+Future" label for presfut, otherwise use title case
+            label = "Present+Future" if tense == "presfut" else tense.title()
             ax.bar(range(len(years)), vals, bottom=bottom, 
-                  label=tense.title(), color=tense_colors[tense], width=1.0)
+                  label=label, color=tense_colors[tense], width=1.0)
             bottom += vals
         
         # Format - using same logic as kl_divergence_checkpoints.py but simplified
@@ -414,7 +424,7 @@ class AnalyzerClass:
         """Compute cross-entropy loss between model predictions and gold labels.
         
         Args:
-            dist_dict: Dictionary containing distribution data (probabilities that sum to 1)
+            dist_dict: Dictionary containing distribution data (will be normalized to probabilities that sum to 1)
             model: Model name ("olmo" or "pythia")
             checkpoint: Checkpoint number
             year_start: Start year (inclusive)
@@ -426,6 +436,9 @@ class AnalyzerClass:
         if checkpoint not in dist_dict:
             raise ValueError(f"Checkpoint {checkpoint} not found in {dist_dict}")
         
+        # Normalize the input distribution to ensure probabilities sum to 1
+        normalized_dist_dict = self._make_relative_distributions(dist_dict)
+        
         # Get gold distribution for this model
         if model == "olmo":
             gold_cp = self.olmo_relative_gold_distribution[checkpoint]
@@ -434,7 +447,8 @@ class AnalyzerClass:
         else:
             raise ValueError(f"Invalid model: {model}")
         
-        dist_cp = dist_dict[checkpoint]
+        dist_cp = normalized_dist_dict[checkpoint]
+        
         losses = {}
         
         for year in range(year_start, year_end + 1):
@@ -461,7 +475,7 @@ class AnalyzerClass:
             pred_future = pred_data["presfut"]
             
             gold_past = gold_data["past"]
-            gold_future = gold_data["future"]
+            gold_future = gold_data["presfut"]
             
             # Compute cross-entropy: -sum(target * log(pred))
             epsilon = 1e-12  # Avoid log(0)
@@ -480,6 +494,13 @@ class AnalyzerClass:
         # Compute average loss
         avg_loss = sum(losses.values()) / len(losses)
         
+        # Sanity check: print sample data for year 1950 if it exists
+        if "1950" in losses and "1950" in dist_cp and "1950" in gold_cp:
+            print(f"Sanity check for {model} checkpoint {checkpoint}, year 1950:")
+            print(f"  Normalized predictions: {dist_cp['1950']}")
+            print(f"  Gold distribution: {gold_cp['1950']}")
+            print(f"  Cross-entropy loss: {losses['1950']}")
+        
         return {
             'per_year_losses': losses,
             'average_loss': avg_loss,
@@ -493,33 +514,41 @@ if __name__ == "__main__":
     years_end = 2050
 
     analyzer = AnalyzerClass()
-    filepath = analyzer.save_all_data_to_file()
-    print(f"Data export completed. File saved: {filepath}")
+
+    # filepath = analyzer.save_all_data_to_file()
+    # print(f"Data export completed. File saved: {filepath}")
+
+    # # plot_training_data
+    # analyzer.bar_plot(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.olmo_exact_string_match, "olmo", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.pythia_exact_string_match, "pythia", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, cp, start_year, years_end)
+
+    # # plot_model_predictions
+    # analyzer.bar_plot(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, cp, start_year, years_end)
+    # analyzer.bar_plot(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, cp, start_year, years_end)
+
+    # # plot_model_predictions with other models
+    # for model_name in analyzer.other_model_predictions.keys():
+    #     analyzer.bar_plot(analyzer.other_model_predictions[model_name], model_name, NEXT_TOKEN_NAME, "final", start_year, years_end, make_relative=False, separate_present_future=True)
 
 
-    # plot_training_data
-    analyzer.bar_plot(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.olmo_exact_string_match, "olmo", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_exact_string_match, "pythia", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, cp, start_year, years_end)
-
-    # plot_model_predictions
-    analyzer.bar_plot(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, cp, start_year, years_end)
-    analyzer.bar_plot(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, cp, start_year, years_end)
-
-    # plot_model_predictions with other models
-    for model_name in analyzer.other_model_predictions.keys():
-        analyzer.bar_plot(analyzer.other_model_predictions[model_name], model_name, NEXT_TOKEN_NAME, "final", start_year, years_end, make_relative=False, separate_present_future=True)
-
-
-    # compute losses
+    # compute losses for 10k checkpoint
     olmo_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_predictions, "olmo", cp, start_year, years_end)
     pythia_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_predictions, "pythia", cp, start_year, years_end)
     olmo_co_occurrence_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_co_occurrence, "olmo", cp, start_year, years_end)
     pythia_co_occurrence_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_co_occurrence, "pythia", cp, start_year, years_end)
     olmo_ngram_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_relative_ngram, "olmo", cp, start_year, years_end)
     pythia_ngram_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_relative_ngram, "pythia", cp, start_year, years_end)
+    # print summary of average losses for 10k checkpoint
+    print(f"Olmo predictions average loss: {olmo_pred_loss['average_loss']}")
+    print(f"Pythia predictions average loss: {pythia_pred_loss['average_loss']}")
+    print(f"Olmo co-occurrence average loss: {olmo_co_occurrence_loss['average_loss']}")
+    print(f"Pythia co-occurrence average loss: {pythia_co_occurrence_loss['average_loss']}")
+    print(f"Olmo n-gram average loss: {olmo_ngram_loss['average_loss']}")
+    print(f"Pythia n-gram average loss: {pythia_ngram_loss['average_loss']}")
+    print("--------------------------------")
 
     
