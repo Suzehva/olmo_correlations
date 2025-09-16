@@ -717,6 +717,72 @@ class AnalyzerClass:
         }
 
 
+def plot_cross_entropies_per_year_over_checkpoints(analyzer, dist_dict, model_name, checkpoints, year_start=1950, year_end=2050, output_dir="cross_entropy_per_year"):
+    """Plot cross-entropy losses over checkpoints with a separate line for each year.
+    
+    Args:
+        analyzer: AnalyzerClass instance
+        dist_dict: Distribution data dictionary
+        model_name: Model name ("olmo" or "pythia")
+        checkpoints: List of checkpoint numbers to plot
+        year_start: Start year (inclusive)
+        year_end: End year (inclusive)
+        output_dir: Directory to save the plot
+    """
+    
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    fig, ax = plt.subplots(figsize=(7, 4))
+    
+        # Color mapping from year to color via a colormap
+    cmap = plt.get_cmap('viridis')
+    norm = plt.Normalize(vmin=year_start, vmax=year_end)
+    
+    # Build series per year
+    year_to_series = {y: {'x': [], 'y': []} for y in range(year_start, year_end + 1)}
+    
+    for cp in checkpoints:
+        ce_result = analyzer.compute_cross_entropy_over_range(
+            dist_dict, model_name, cp, year_start, year_end, allow_missing_data=False
+        )
+        for year_str, loss in ce_result['per_year_losses'].items():
+            year_int = int(year_str)
+            if year_start <= year_int <= year_end:
+                year_to_series[year_int]['x'].append(cp)
+                year_to_series[year_int]['y'].append(loss)
+    
+    # Plot each year as a separate line
+    for year in range(year_start, year_end + 1):
+        xs = year_to_series[year]['x']
+        ys = year_to_series[year]['y']
+        if not xs:
+            continue
+        color = cmap(norm(year))
+        ax.plot(xs, ys, color=color, linewidth=1.2)
+    
+    # Format the plot
+    ax.set_xlabel('Checkpoint', fontsize=12)
+    ax.set_ylabel('Cross-Entropy Loss', fontsize=12)
+    model_display = MODEL_DISPLAY_NAMES.get(model_name, str(model_name))
+    ax.set_title(f"{model_display} — Cross-Entropy Loss per Year over Training", fontsize=14)
+    ax.grid(True, alpha=0.3)
+    
+    # Add colorbar to show year mapping
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+    cbar = plt.colorbar(sm, ax=ax)
+    cbar.set_label('Year', fontsize=12)
+    
+    # Save the plot
+    filename = f"{model_name}_cross_entropy_per_year_over_checkpoints_{year_start}_{year_end}.png"
+    save_path = Path(output_dir) / filename
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=600, bbox_inches='tight')
+    plt.close()
+    print(f"Saved cross-entropy per year over checkpoints plot: {save_path}")
+
+
 def plot_average_cross_entropies_over_checkpoints(analyzer, distributions_dict, model_name, checkpoints, year_start=1950, year_end=2050, output_dir="cross_entropy_over_checkpoints"):
     """Plot average cross-entropy losses over checkpoints for multiple distributions.
     
@@ -915,18 +981,22 @@ if __name__ == "__main__":
     
     
     # Plot average cross-entropies over checkpoints
-    olmo_distributions = {
-        NEXT_TOKEN_NAME: analyzer.olmo_predictions,
-        CO_OCCURR_NAME: analyzer.olmo_co_occurrence,
-        NGRAM_NAME: analyzer.olmo_relative_ngram,
-    }
-    plot_average_cross_entropies_over_checkpoints(analyzer, olmo_distributions, "olmo", OLMO_CHECKPOINTS, start_year, years_end)
+    # olmo_distributions = {
+    #     NEXT_TOKEN_NAME: analyzer.olmo_predictions,
+    #     CO_OCCURR_NAME: analyzer.olmo_co_occurrence,
+    #     NGRAM_NAME: analyzer.olmo_relative_ngram,
+    # }
+    # plot_average_cross_entropies_over_checkpoints(analyzer, olmo_distributions, "olmo", OLMO_CHECKPOINTS, start_year, years_end)
     
-    pythia_distributions = {
-        NEXT_TOKEN_NAME: analyzer.pythia_predictions,
-        CO_OCCURR_NAME: analyzer.pythia_co_occurrence,
-        NGRAM_NAME: analyzer.pythia_relative_ngram,
-    }
-    plot_average_cross_entropies_over_checkpoints(analyzer, pythia_distributions, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
+    # pythia_distributions = {
+    #     NEXT_TOKEN_NAME: analyzer.pythia_predictions,
+    #     CO_OCCURR_NAME: analyzer.pythia_co_occurrence,
+    #     NGRAM_NAME: analyzer.pythia_relative_ngram,
+    # }
+    # plot_average_cross_entropies_over_checkpoints(analyzer, pythia_distributions, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
+    
+    # Plot cross-entropy per year over checkpoints (individual year lines)
+    plot_cross_entropies_per_year_over_checkpoints(analyzer, analyzer.olmo_predictions, "olmo", OLMO_CHECKPOINTS, start_year, years_end)
+    plot_cross_entropies_per_year_over_checkpoints(analyzer, analyzer.pythia_predictions, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
      
          
