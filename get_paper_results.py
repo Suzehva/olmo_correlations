@@ -24,7 +24,7 @@ TENSES = list(set(TENSE_MAPPING.values()))
 TENSE_ORDER = ["past", "presfut"]
 TENSE_COLORS = {"past": "orange", "future": "green", "present": "#4b0082", "presfut": "#4b0082"}
 
-
+ALL_VERBS_PREDICTIONS_TEMPLATE = "../olmo_predictions/model_predictions__{prompt}/{model_name}/{just_model_name}_all_verbs_predictions.json"
 
 MODEL_DISPLAY_NAMES = {
     "pythia": "Pythia-1.4B-deduped",
@@ -201,6 +201,101 @@ class AnalyzerClass:
             model_name_to_predictions[model_name] = {"final": year_to_counts_absolute}
         
         return model_name_to_predictions
+
+    def load_other_prompts_using_good_verbs(self, prompt_names, model_names):
+        """Load per-prompt predictions aggregating per-year probabilities over all verbs.
+        Uses the per-file metadata 'tense_dict' to map verbs to tenses, then
+        collapses present+future into 'presfut'. Always operates on per-year
+        probabilities that sum to ~1.
+        
+        Returns:
+            dict: prompt_name -> model_name -> {"final": year_to_counts_absolute}
+                  where year_to_counts_absolute[year][tense] holds summed probabilities.
+        """
+        prompt_to_model_to_predictions = {}
+
+        for prompt_name in prompt_names:
+            prompt_to_model_to_predictions[prompt_name] = {}
+            for model_name in model_names:
+                just_model_name = model_name.split("_")[-1]
+                predictions_path = ALL_VERBS_PREDICTIONS_TEMPLATE.format(
+                    prompt=prompt_name,
+                    model_name=model_name,
+                    just_model_name=just_model_name,
+                )
+                if not os.path.exists(predictions_path):
+                    raise FileNotFoundError(f"could not find {predictions_path}")
+                with open(predictions_path, "r") as f:
+                    data = json.load(f)
+
+                # Build verb->tense mapping from file metadata tense_dict
+                if "metadata" not in data or "tense_dict" not in data["metadata"]:
+                    raise ValueError(f"Missing 'metadata.tense_dict' in {predictions_path}")
+                tense_dict = data["metadata"]["tense_dict"]
+                verb_to_tense = {}
+                for v in tense_dict.get("past", []):
+                    vt = v.strip()
+                    if vt:
+                        verb_to_tense[vt] = "past"
+                for v in tense_dict.get("present", []):
+                    vt = v.strip()
+                    if vt:
+                        verb_to_tense[vt] = "presfut"
+                for v in tense_dict.get("future", []):
+                    vt = v.strip()
+                    if vt:
+                        verb_to_tense[vt] = "presfut"
+
+                # Initialize all years to zeros
+                year_to_counts_absolute = {}
+                for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1]):
+                    year_to_counts_absolute[str(year)] = {"past": 0.0, "presfut": 0.0}
+
+                # Aggregate summed probabilities per year according to tense mapping
+                for year in data.keys():
+                    if year == "metadata":
+                        continue
+                    year_record = data[year]
+
+                    # Files provide 'absolute' next-token probabilities; normalize to sum to 1
+                    if "absolute" not in year_record:
+                        raise ValueError(f"Year record missing 'absolute' key for {predictions_path}, year {year}")
+                    verb_to_prob_cleaned = {k.strip(): v for k, v in year_record["absolute"].items()}
+                    total = sum(verb_to_prob_cleaned.values())
+                    if total > 1.0 + 1e-6:
+                        top_contribs = sorted(verb_to_prob_cleaned.items(), key=lambda x: x[1], reverse=True)[:10]
+                        raise ValueError(
+                            f"Total probability in 'absolute' > 1 for {model_name} prompt '{prompt_name}' year {year}: "
+                            f"total={total:.8f}. Top contributors: {top_contribs}"
+                        )
+                    total_prob_year = total
+                    
+                    past_sum = 0.0
+                    presfut_sum = 0.0
+                    for verb, prob in verb_to_prob_cleaned.items():
+                        tense = verb_to_tense.get(verb)
+                        if tense == "past":
+                            past_sum += prob
+                        elif tense == "presfut":
+                            presfut_sum += prob
+                    
+                    mapped_sum = past_sum + presfut_sum
+                    if abs(mapped_sum - total_prob_year) > 1e-8:
+                        missing = total_prob_year - mapped_sum
+                        unmapped = [v for v in verb_to_prob_cleaned.keys() if v not in verb_to_tense]
+                        unmapped_top = sorted([(v, verb_to_prob_cleaned[v]) for v in unmapped], key=lambda x: x[1], reverse=True)[:10]
+                        raise ValueError(
+                            f"Mass mismatch for {model_name} prompt '{prompt_name}' year {year}: "
+                            f"mapped={mapped_sum:.8f} total={total_prob_year:.8f} missing={missing:.8f}. "
+                            f"Top unmapped verbs: {unmapped_top}"
+                        )
+                    
+                    year_to_counts_absolute[year]["past"] = past_sum
+                    year_to_counts_absolute[year]["presfut"] = presfut_sum
+
+                prompt_to_model_to_predictions[prompt_name][model_name] = {"final": year_to_counts_absolute}
+
+        return prompt_to_model_to_predictions
 
     def load_model_predictions(self, file_template, checkpoints):
         results_absolute = {}
@@ -996,7 +1091,23 @@ if __name__ == "__main__":
     # plot_average_cross_entropies_over_checkpoints(analyzer, pythia_distributions, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
     
     # Plot cross-entropy per year over checkpoints (individual year lines)
-    plot_cross_entropies_per_year_over_checkpoints(analyzer, analyzer.olmo_predictions, "olmo", OLMO_CHECKPOINTS, start_year, years_end)
-    plot_cross_entropies_per_year_over_checkpoints(analyzer, analyzer.pythia_predictions, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
-     
+    # plot_cross_entropies_per_year_over_checkpoints(analyzer, analyzer.olmo_predictions, "olmo", OLMO_CHECKPOINTS, start_year, years_end)
+    # plot_cross_entropies_per_year_over_checkpoints(analyzer, analyzer.pythia_predictions, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
+ 
+    # Example (commented): Load prompt-based all-verbs predictions using good-verbs mapping
+    prompts = [
+        # "During__year__there", "In__year__the_choir", "In__year__there", 
+        # "In__year__they", "In__year_,_at_the_dinner_table,_the_family", 
+        # "In__year_,_there", "In__year_,_with_a_knife,_he", "In__year_,_with_a_pen_to_paper,_she", 
+        "In__year_,_with_his_credit_card,_he", 
+        # "In_the_magic_show_in__year_,_there_magically",
+    ]
+    models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
+    prompt_preds = analyzer.load_other_prompts_using_good_verbs(prompts, models_for_prompts)
+    # Plot absolute (non-relative) bars for each model at the synthetic 'final' checkpoint
+    for model_name in models_for_prompts:
+        for prompt in prompts:
+            analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, NEXT_TOKEN_NAME, "final", start_year, years_end, make_relative=False, separate_present_future=False)
+        # Saved under folder f"{model_name}_checkpointfinal"
+
          
