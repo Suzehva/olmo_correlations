@@ -428,7 +428,7 @@ class AnalyzerClass:
         plt.close()
         print(f"Saved: {save_path}")
 
-    def bar_plots_for_checkpoints(self, dist_dict, model, data_type, checkpoints, rows, cols, year_start, year_end):
+    def bar_plots_for_checkpoints(self, dist_dict, model, data_type, checkpoints, rows, cols, year_start, year_end, subplot_width=3.5, subplot_height=2.2):
         """
         Create a grid of stacked bar plots, one subplot per checkpoint.
         Adapted for the new tense structure using 'past' and 'presfut'.
@@ -442,6 +442,8 @@ class AnalyzerClass:
             cols: Number of columns in the subplot grid
             year_start: Start year (inclusive)
             year_end: End year (inclusive)
+            subplot_width: Width multiplier for each subplot (default: 3.5)
+            subplot_height: Height multiplier for each subplot (default: 2.2)
         """
         if len(checkpoints) > rows * cols:
             raise ValueError(f"Too many checkpoints ({len(checkpoints)}) for grid size {rows}×{cols}")
@@ -449,7 +451,7 @@ class AnalyzerClass:
         # Convert to relative distributions
         dist_dict = self._make_relative_distributions(dist_dict)
 
-        fig, axes = plt.subplots(rows, cols, figsize=(4.5 * cols, 2.6 * rows))
+        fig, axes = plt.subplots(rows, cols, figsize=(subplot_width * cols, subplot_height * rows))
         if rows == 1 and cols == 1:
             axes = [axes]
         else:
@@ -487,11 +489,23 @@ class AnalyzerClass:
                 bottom += vals
 
             # Format subplot
-            model_display = get_model_display_name(model, data_type)
-            ax.set_title(f"{model_display} — {data_type} | Checkpoint {cp}", fontsize=10)
-            tick_step = max(1, len(years) // 20)
-            ax.set_xticks(range(0, len(years), tick_step))
-            ax.set_xticklabels(years[::tick_step], rotation=45, fontsize=9)
+            ax.set_title(f"Checkpoint {cp}", fontsize=10)
+            # Show years every 10 years; only label on bottom row to reduce clutter
+            tick_indices = [i for i, y in enumerate(years) if int(y) % 10 == 0]
+            if tick_indices:
+                ax.set_xticks(tick_indices)
+                if (idx // cols) == (rows - 1):
+                    ax.set_xticklabels([years[i] for i in tick_indices], rotation=45, fontsize=9)
+                else:
+                    ax.set_xticklabels([])
+            else:
+                # Fallback if no years divisible by 10
+                tick_step = max(1, len(years) // 10)
+                ax.set_xticks(range(0, len(years), tick_step))
+                if (idx // cols) == (rows - 1):
+                    ax.set_xticklabels(years[::tick_step], rotation=45, fontsize=9)
+                else:
+                    ax.set_xticklabels([])
             if idx % cols == 0:
                 ax.set_ylabel("Probability")
             ax.set_ylim(0, 1)
@@ -511,10 +525,43 @@ class AnalyzerClass:
             else:
                 legend_labels.append(tense.title())
         
-        fig.legend(legend_labels, loc='upper center', bbox_to_anchor=(0.5, -0.05), ncol=len(TENSE_ORDER), fontsize=12)
-
-        plt.tight_layout()
-        plt.subplots_adjust(bottom=0.12)
+        # Add main title at the top
+        model_display = get_model_display_name(model, data_type)
+        
+        # Dynamic layout tuning based on grid shape
+        if rows == 1:
+            # 1xN: give extra top margin so title never overlaps plots
+            title_y = 0.99
+            top_margin = 0.80
+            pad = 2.0
+        elif rows == 2:
+            # 2xN: similar to 1xN but slightly more compact
+            title_y = 0.985
+            top_margin = 0.85
+            pad = 2.0
+        elif rows >= 6:
+            # Tall grids (e.g., 8x5): keep title closer, give plots more space
+            title_y = 0.98
+            top_margin = 0.95
+            pad = 2.2
+        else:
+            # Mid-size grids (3-5 rows)
+            title_y = 0.975
+            top_margin = 0.92
+            pad = 2.0
+        bottom_margin = 0.15
+        hspace = 0.5 if rows > 2 else 0.4
+        wspace = 0.3
+        
+        fig.suptitle(f"{model_display} — {data_type}", fontsize=16, y=title_y)
+        
+        # Apply layout with dynamic margins
+        plt.tight_layout(pad=pad)
+        plt.subplots_adjust(bottom=bottom_margin, top=top_margin, hspace=hspace, wspace=wspace)
+        
+        # Add legend at the bottom (dynamic vertical position)
+        legend_y = 0.015 if rows == 1 else (0.12 if rows >= 6 else 0.0)
+        fig.legend(legend_labels, loc='upper center', bbox_to_anchor=(0.5, legend_y), ncol=len(TENSE_ORDER), fontsize=12)
 
         # Save combined figure
         year_range = f"{year_start}-{year_end}"
@@ -666,6 +713,61 @@ class AnalyzerClass:
         }
 
 
+def plot_average_cross_entropies_over_checkpoints(analyzer, distributions_dict, model_name, checkpoints, year_start=1950, year_end=2050, output_dir="cross_entropy_over_checkpoints"):
+    """Plot average cross-entropy losses over checkpoints for multiple distributions.
+    
+    Args:
+        analyzer: AnalyzerClass instance
+        distributions_dict: Dictionary mapping distribution names to distribution data dictionaries
+        model_name: Model name ("olmo" or "pythia")
+        checkpoints: List of checkpoint numbers to plot
+        year_start: Start year (inclusive)
+        year_end: End year (inclusive)
+        output_dir: Directory to save the plot
+    """
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    fig, ax = plt.subplots(figsize=(9, 6))
+    
+    for dist_name, dist_dict in distributions_dict.items():
+        # Only use checkpoints that exist in this distribution
+        
+        avg_losses = []
+        used_checkpoints = []
+        
+        for cp in checkpoints:
+            ce_result = analyzer.compute_cross_entropy_over_range(
+                dist_dict, model_name, cp, year_start, year_end, allow_missing_data=True
+            )
+            avg_losses.append(ce_result['average_loss'])
+            used_checkpoints.append(cp)
+        
+        # Use consistent colors from the cross-entropy color mapping
+        color = CROSS_ENTROPY_COLOR_MAPPING.get(dist_name, "black")
+        ax.plot(used_checkpoints, avg_losses, 
+                label=dist_name, color=color, marker='o', linewidth=2, markersize=6)
+                
+        print(f"{dist_name}: {len(used_checkpoints)} checkpoints plotted")
+    
+    # Format the plot
+    ax.set_xlabel('Checkpoint', fontsize=12)
+    ax.set_ylabel('Average Cross-Entropy Loss', fontsize=12)
+    model_display = MODEL_DISPLAY_NAMES.get(model_name, str(model_name))
+    ax.set_title(f"{model_display} — Cross-Entropy vs Training Progress", fontsize=14)
+    ax.legend(loc='upper right')
+    ax.grid(True, alpha=0.3)
+    
+    # Save the plot
+    num_dists = len(distributions_dict)
+    filename = f"{model_name}_avg_cross_entropy_over_checkpoints_{num_dists}dists_{year_start}_{year_end}.png"
+    save_path = Path(output_dir) / filename
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=600, bbox_inches='tight')
+    plt.close()
+    print(f"Saved cross-entropy over checkpoints plot: {save_path}")
+
+
 def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=1950, year_end=2050, output_dir="cross_entropy_plots"):
         """Plot cross-entropy losses as scatter plots for multiple distributions.
         
@@ -799,16 +901,32 @@ if __name__ == "__main__":
     # plot_cross_entropies([olmo_pred_loss, olmo_co_occurrence_loss, olmo_ngram_loss], [NEXT_TOKEN_NAME, CO_OCCURR_NAME, NGRAM_NAME], "olmo", start_year, years_end)
     # plot_cross_entropies([pythia_pred_loss, pythia_co_occurrence_loss, pythia_ngram_loss], [NEXT_TOKEN_NAME, CO_OCCURR_NAME, NGRAM_NAME], "pythia", start_year, years_end)
     
-    # Generate checkpoint grid plots (APPENDIX) SUZE IS HERE
-    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500, 7750, 8000, 8250, 8500, 8750, 9000, 9250, 9500, 9750, 10000], 8, 5, start_year, years_end)
-    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
-    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
-    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
-    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
-    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
-     
-    # 4.5 x 2.6
-    analyzer.bar_plots_for_checkpoints(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, [1000, 3000, 7000], 1, 3, start_year, years_end)
-    analyzer.bar_plots_for_checkpoints(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, [1000, 3000, 7000], 1, 3, start_year, years_end)
-     
+
+    analyzer.bar_plots_for_checkpoints(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, [1000, 3000, 7000], 1, 3, start_year, years_end, subplot_width=4.5, subplot_height=2.6)
+    analyzer.bar_plots_for_checkpoints(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, [1000, 3000, 7000], 1, 3, start_year, years_end, subplot_width=4.5, subplot_height=2.6)
     
+    # # Generate checkpoint grid plots (APPENDIX)
+    analyzer.bar_plots_for_checkpoints(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500, 7750, 8000, 8250, 8500, 8750, 9000, 9250, 9500, 9750, 10000], 8, 5, start_year, years_end)
+    analyzer.bar_plots_for_checkpoints(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
+    analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
+    analyzer.bar_plots_for_checkpoints(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+    analyzer.bar_plots_for_checkpoints(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+    analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+    
+    
+    # # Plot average cross-entropies over checkpoints
+    # olmo_distributions = {
+    #     NEXT_TOKEN_NAME: analyzer.olmo_predictions,
+    #     CO_OCCURR_NAME: analyzer.olmo_co_occurrence,
+    #     NGRAM_NAME: analyzer.olmo_relative_ngram,
+    # }
+    # plot_average_cross_entropies_over_checkpoints(analyzer, olmo_distributions, "olmo", OLMO_CHECKPOINTS, start_year, years_end)
+    
+    # pythia_distributions = {
+    #     NEXT_TOKEN_NAME: analyzer.pythia_predictions,
+    #     CO_OCCURR_NAME: analyzer.pythia_co_occurrence,
+    #     NGRAM_NAME: analyzer.pythia_relative_ngram,
+    # }
+    # plot_average_cross_entropies_over_checkpoints(analyzer, pythia_distributions, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
+     
+         
