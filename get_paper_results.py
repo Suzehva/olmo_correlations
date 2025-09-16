@@ -66,7 +66,7 @@ def get_model_display_name(model_key, data_type):
 OLMO_CUTOFF = 2024
 OLMO_CHECKPOINTS = list(range(250, 10001, 250))
 PYTHIA_CUTOFF = 2020
-PYTHIA_CHECKPOINTS = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 15000, 20000, 40000, 60000, 80000, 90000, 100000, 110000, 120000, 130000, 143000]
+PYTHIA_CHECKPOINTS = [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000]
 
 
 class AnalyzerClass:
@@ -148,7 +148,8 @@ class AnalyzerClass:
                             year_to_counts_absolute[year][tense] += counts_per_verb[verb]
                     year_to_counts_absolute[year] = tense_counts_absolute
 
-                results_absolute[cp_num] = year_to_counts_absolute
+                # Store with the original cp_base, not the modified cp_num used for file loading
+                results_absolute[cp_base] = year_to_counts_absolute
             return results_absolute
 
     def load_other_model_predictions(self, model_names):
@@ -619,7 +620,7 @@ class AnalyzerClass:
             Dictionary with cross-entropy results including years_used
         """
         if checkpoint not in dist_dict:
-            raise ValueError(f"Checkpoint {checkpoint} not found in {dist_dict}")
+            raise ValueError(f"Checkpoint {checkpoint} not found. Available keys: {dist_dict.keys()}")
         
         # Normalize the input distribution to ensure probabilities sum to 1
         normalized_dist_dict = self._make_relative_distributions(dist_dict)
@@ -697,7 +698,10 @@ class AnalyzerClass:
             years_used.append(year_str)
         
         # Compute average loss
-        avg_loss = sum(losses.values()) / len(losses)
+        if len(losses) == 0:
+            raise ValueError(f"No valid data points for {model} checkpoint {checkpoint}")
+        else:
+            avg_loss = sum(losses.values()) / len(losses)
         
         # Sanity check: print sample data for year 1950 if it exists
         # if "1950" in losses and "1950" in dist_cp and "1950" in gold_cp:
@@ -733,27 +737,23 @@ def plot_average_cross_entropies_over_checkpoints(analyzer, distributions_dict, 
         # Only use checkpoints that exist in this distribution
         
         avg_losses = []
-        used_checkpoints = []
         
         for cp in checkpoints:
             ce_result = analyzer.compute_cross_entropy_over_range(
                 dist_dict, model_name, cp, year_start, year_end, allow_missing_data=True
             )
             avg_losses.append(ce_result['average_loss'])
-            used_checkpoints.append(cp)
         
         # Use consistent colors from the cross-entropy color mapping
         color = CROSS_ENTROPY_COLOR_MAPPING.get(dist_name, "black")
-        ax.plot(used_checkpoints, avg_losses, 
+        ax.plot(checkpoints, avg_losses, 
                 label=dist_name, color=color, marker='o', linewidth=2, markersize=6)
-                
-        print(f"{dist_name}: {len(used_checkpoints)} checkpoints plotted")
     
     # Format the plot
     ax.set_xlabel('Checkpoint', fontsize=12)
     ax.set_ylabel('Average Cross-Entropy Loss', fontsize=12)
     model_display = MODEL_DISPLAY_NAMES.get(model_name, str(model_name))
-    ax.set_title(f"{model_display} — Cross-Entropy vs Training Progress", fontsize=14)
+    ax.set_title(f"{model_display} — Cross-Entropy Loss over Training", fontsize=14)
     ax.legend(loc='upper right')
     ax.grid(True, alpha=0.3)
     
@@ -902,31 +902,31 @@ if __name__ == "__main__":
     # plot_cross_entropies([pythia_pred_loss, pythia_co_occurrence_loss, pythia_ngram_loss], [NEXT_TOKEN_NAME, CO_OCCURR_NAME, NGRAM_NAME], "pythia", start_year, years_end)
     
 
-    analyzer.bar_plots_for_checkpoints(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, [1000, 3000, 7000], 1, 3, start_year, years_end, subplot_width=4.5, subplot_height=2.6)
-    analyzer.bar_plots_for_checkpoints(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, [1000, 3000, 7000], 1, 3, start_year, years_end, subplot_width=4.5, subplot_height=2.6)
+    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, [1000, 3000, 7000], 1, 3, start_year, years_end, subplot_width=4.5, subplot_height=2.6)
+    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, [1000, 3000, 7000], 1, 3, start_year, years_end, subplot_width=4.5, subplot_height=2.6)
     
-    # # Generate checkpoint grid plots (APPENDIX)
-    analyzer.bar_plots_for_checkpoints(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500, 7750, 8000, 8250, 8500, 8750, 9000, 9250, 9500, 9750, 10000], 8, 5, start_year, years_end)
-    analyzer.bar_plots_for_checkpoints(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
-    analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
-    analyzer.bar_plots_for_checkpoints(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
-    analyzer.bar_plots_for_checkpoints(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
-    analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+    # # # Generate checkpoint grid plots (APPENDIX)
+    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, [250, 500, 750, 1000, 1250, 1500, 1750, 2000, 2250, 2500, 2750, 3000, 3250, 3500, 3750, 4000, 4250, 4500, 4750, 5000, 5250, 5500, 5750, 6000, 6250, 6500, 6750, 7000, 7250, 7500, 7750, 8000, 8250, 8500, 8750, 9000, 9250, 9500, 9750, 10000], 8, 5, start_year, years_end)
+    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
+    # analyzer.bar_plots_for_checkpoints(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, [260, 500, 760, 1000, 1260, 1500, 1760, 2000, 2260, 2500, 2760, 3000, 3260, 3500, 3760, 4000, 4260, 4500, 4760, 5000, 5260, 5500, 5760, 6000, 6260, 6500, 6760, 7000, 7260, 7500, 7760, 8000, 8260, 8500, 8760, 9000, 9260, 9500, 9760, 10000], 8, 5, start_year, years_end)
+    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
+    # analyzer.bar_plots_for_checkpoints(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000], 2, 5, start_year, years_end)
     
     
-    # # Plot average cross-entropies over checkpoints
-    # olmo_distributions = {
-    #     NEXT_TOKEN_NAME: analyzer.olmo_predictions,
-    #     CO_OCCURR_NAME: analyzer.olmo_co_occurrence,
-    #     NGRAM_NAME: analyzer.olmo_relative_ngram,
-    # }
-    # plot_average_cross_entropies_over_checkpoints(analyzer, olmo_distributions, "olmo", OLMO_CHECKPOINTS, start_year, years_end)
+    # Plot average cross-entropies over checkpoints
+    olmo_distributions = {
+        NEXT_TOKEN_NAME: analyzer.olmo_predictions,
+        CO_OCCURR_NAME: analyzer.olmo_co_occurrence,
+        NGRAM_NAME: analyzer.olmo_relative_ngram,
+    }
+    plot_average_cross_entropies_over_checkpoints(analyzer, olmo_distributions, "olmo", OLMO_CHECKPOINTS, start_year, years_end)
     
-    # pythia_distributions = {
-    #     NEXT_TOKEN_NAME: analyzer.pythia_predictions,
-    #     CO_OCCURR_NAME: analyzer.pythia_co_occurrence,
-    #     NGRAM_NAME: analyzer.pythia_relative_ngram,
-    # }
-    # plot_average_cross_entropies_over_checkpoints(analyzer, pythia_distributions, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
+    pythia_distributions = {
+        NEXT_TOKEN_NAME: analyzer.pythia_predictions,
+        CO_OCCURR_NAME: analyzer.pythia_co_occurrence,
+        NGRAM_NAME: analyzer.pythia_relative_ngram,
+    }
+    plot_average_cross_entropies_over_checkpoints(analyzer, pythia_distributions, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
      
          
