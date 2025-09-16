@@ -362,7 +362,8 @@ class AnalyzerClass:
         # Assert that distributions sum to 1 (with small tolerance for floating point errors)
         for year_str, year_data in cp_data.items():
             total = sum(year_data.values())
-            assert abs(total - 1.0) < 1e-6 or total == 0.0, f"Distribution for year {year_str} sums to {total}, not 1.0: {year_data}"
+            if make_relative:
+                assert abs(total - 1.0) < 1e-6 or total == 0.0, f"Distribution for year {year_str} sums to {total}, not 1.0: {year_data}"
         all_years = sorted(cp_data.keys())
         
         # Filter years based on year_start and year_end
@@ -596,7 +597,7 @@ def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=19
                     years.append(year_int)
                     losses.append(per_year_losses[year_str])
             
-            ax.scatter(years, losses, label=label, color=CROSS_ENTROPY_COLOR_MAPPING[label], s=10, alpha=1.0)
+            ax.scatter(years, losses, label=label, color=CROSS_ENTROPY_COLOR_MAPPING[label], s=2, alpha=1.0)
             
             # Collect all plotted data for axis limits
             all_years_plotted.extend(years)
@@ -641,24 +642,24 @@ if __name__ == "__main__":
     analyzer = AnalyzerClass()
 
     
-    # filepath = analyzer.save_all_data_to_file()
-    # print(f"Data export completed. File saved: {filepath}")
+    filepath = analyzer.save_all_data_to_file()
+    print(f"Data export completed. File saved: {filepath}")
 
-    # # plot_training_data
-    # analyzer.bar_plot(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, cp, start_year, years_end)
-    # analyzer.bar_plot(analyzer.olmo_exact_string_match, "olmo", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
-    # analyzer.bar_plot(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, cp, start_year, years_end)
-    # analyzer.bar_plot(analyzer.pythia_exact_string_match, "pythia", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
-    # analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, cp, start_year, years_end)
-    # analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, cp, start_year, years_end)
+    # plot_training_data
+    analyzer.bar_plot(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.olmo_exact_string_match, "olmo", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.pythia_exact_string_match, "pythia", EXACT_STRING_MATCH_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, cp, start_year, years_end)
 
-    # # plot_model_predictions
-    # analyzer.bar_plot(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, cp, start_year, years_end)
-    # analyzer.bar_plot(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, cp, start_year, years_end)
+    # plot_model_predictions
+    analyzer.bar_plot(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, cp, start_year, years_end)
+    analyzer.bar_plot(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, cp, start_year, years_end)
 
-    # # plot_model_predictions with other models
-    # for model_name in analyzer.other_model_predictions.keys():
-    #     analyzer.bar_plot(analyzer.other_model_predictions[model_name], model_name, NEXT_TOKEN_NAME, "final", start_year, years_end, make_relative=False, separate_present_future=True)
+    # plot_model_predictions with other models
+    for model_name in analyzer.other_model_predictions.keys():
+        analyzer.bar_plot(analyzer.other_model_predictions[model_name], model_name, NEXT_TOKEN_NAME, "final", start_year, years_end, make_relative=False, separate_present_future=True)
 
 
     # compute losses for 10k checkpoint
