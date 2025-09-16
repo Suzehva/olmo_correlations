@@ -44,6 +44,13 @@ NGRAM_NAME = "N-gram model"
 NEXT_TOKEN_NAME = "Next-token predictions"
 TRAINING_DERIVED_DISPLAY_TYPES = {CO_OCCURR_NAME, EXACT_STRING_MATCH_NAME, NGRAM_NAME}
 
+# Consistent color mapping for cross-entropy plots
+CROSS_ENTROPY_COLOR_MAPPING = {
+    NEXT_TOKEN_NAME: "grey",
+    NGRAM_NAME: "blue", 
+    CO_OCCURR_NAME: "red",
+}
+
 MODEL_CORPUS_OVERRIDES = {
     "pythia": "The Pile",
     "olmo": "OLMo-mix-1124",
@@ -557,6 +564,74 @@ class AnalyzerClass:
         }
 
 
+def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=1950, year_end=2050, output_dir="cross_entropy_plots"):
+        """Plot cross-entropy losses as scatter plots for multiple distributions.
+        
+        Args:
+            ce_results_list: List of cross-entropy result dictionaries from compute_cross_entropy_over_range
+            labels_list: List of labels for each distribution
+            model_name: Model name for the plot title and filename
+            year_start: Start year (inclusive)
+            year_end: End year (inclusive)
+            output_dir: Directory to save the plots
+        """
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        
+        fig, ax = plt.subplots(figsize=(4.4, 3))
+        
+        all_years_plotted = []
+        all_losses_plotted = []
+        
+        for ce_result, label in zip(ce_results_list, labels_list):
+            per_year_losses = ce_result['per_year_losses']
+            
+            # Filter years and prepare data for plotting
+            years = []
+            losses = []
+            
+            for year_str in ce_result['years_used']:
+                year_int = int(year_str)
+                # Filter by year_start and year_end
+                if year_start <= year_int <= year_end:
+                    years.append(year_int)
+                    losses.append(per_year_losses[year_str])
+            
+            ax.scatter(years, losses, label=label, color=CROSS_ENTROPY_COLOR_MAPPING[label], s=10, alpha=1.0)
+            
+            # Collect all plotted data for axis limits
+            all_years_plotted.extend(years)
+            all_losses_plotted.extend(losses)
+        
+        # Format the plot
+        ax.set_xlabel('Year', fontsize=12)
+        ax.set_ylabel('Cross-Entropy Loss', fontsize=12)
+        model_display = MODEL_DISPLAY_NAMES.get(model_name, str(model_name))
+        ax.set_title(f"{model_display}", fontsize=14)
+        ax.legend(loc='upper left')
+        ax.grid(True, alpha=0.3)
+        
+        # Set axis limits based on actual plotted data
+        if all_years_plotted and all_losses_plotted:
+            # X-axis: set to requested range with some padding
+            ax.set_xlim(year_start - 5, year_end + 5)
+            
+            # Y-axis: set based on actual data with some padding
+            y_min, y_max = min(all_losses_plotted), max(all_losses_plotted)
+            y_range = y_max - y_min
+            y_padding = max(0.05 * y_range, 0.01)  # At least 5% padding or 0.01 units
+            ax.set_ylim(max(0, y_min - y_padding), y_max + y_padding)
+        
+        # Save the plot
+        num_dists = len(labels_list)
+        filename = f"{model_name}_cross_entropy_{num_dists}dists_{year_start}_{year_end}.png"
+        save_path = Path(output_dir) / filename
+        
+        plt.tight_layout()
+        plt.savefig(save_path, dpi=600, bbox_inches='tight')
+        plt.close()
+        print(f"Saved cross-entropy plot: {save_path}")
+
+
 if __name__ == "__main__":
     # python get_paper_results.py
     cp = 10000
@@ -608,16 +683,19 @@ if __name__ == "__main__":
     print("--------------------------------")
     # print summary of average losses for 10k checkpoint
     olmo_exact_str_years = analyzer.collect_years_with_no_data(analyzer.olmo_exact_string_match, cp, start_year, years_end, "OLMo exact string match")
-    olmo_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.olmo_predictions, "olmo", cp, start_year, years_end, specific_years=olmo_exact_str_years)
-    print(f"Olmo predictions average loss (years used: {len(olmo_exact_str_years)}): {olmo_pred_loss['average_loss']}")
+    olmo_pred_loss_less_data = analyzer.compute_cross_entropy_over_range(analyzer.olmo_predictions, "olmo", cp, start_year, years_end, specific_years=olmo_exact_str_years)
+    print(f"Olmo predictions average loss (years used: {len(olmo_exact_str_years)}): {olmo_pred_loss_less_data['average_loss']}")
     print("--------------------------------")
     
     # print summary of loss if only using ones frome xact string match for each metods
     pythia_exact_str_years = analyzer.collect_years_with_no_data(analyzer.pythia_exact_string_match, cp, start_year, years_end, "Pythia exact string match")
-    pythia_pred_loss = analyzer.compute_cross_entropy_over_range(analyzer.pythia_predictions, "pythia", cp, start_year, years_end, specific_years=pythia_exact_str_years)
-    print(f"Pythia predictions average loss (years used: {len(pythia_exact_str_years)}): {pythia_pred_loss['average_loss']}")
+    pythia_pred_loss_less_data = analyzer.compute_cross_entropy_over_range(analyzer.pythia_predictions, "pythia", cp, start_year, years_end, specific_years=pythia_exact_str_years)
+    print(f"Pythia predictions average loss (years used: {len(pythia_exact_str_years)}): {pythia_pred_loss_less_data['average_loss']}")
     print("--------------------------------")
-    
+
+    # plot cross-entropy losses
+    plot_cross_entropies([olmo_pred_loss, olmo_co_occurrence_loss, olmo_ngram_loss], [NEXT_TOKEN_NAME, CO_OCCURR_NAME, NGRAM_NAME], "olmo", start_year, years_end)
+    plot_cross_entropies([pythia_pred_loss, pythia_co_occurrence_loss, pythia_ngram_loss], [NEXT_TOKEN_NAME, CO_OCCURR_NAME, NGRAM_NAME], "pythia", start_year, years_end)
     
     
 
