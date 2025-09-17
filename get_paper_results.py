@@ -24,8 +24,20 @@ TENSES = list(set(TENSE_MAPPING.values()))
 TENSE_ORDER = ["past", "presfut"]
 TENSE_COLORS = {"past": "orange", "future": "green", "present": "#4b0082", "presfut": "#4b0082"}
 
-ALL_VERBS_PREDICTIONS_TEMPLATE = "../olmo_predictions/model_predictions__{prompt}/{model_name}/{just_model_name}_all_verbs_predictions.json"
+PROMPT_DISPLAY_NAMES = {
+    "During__year__there":"During [year] there", 
+    "In__year__the_choir":"In [year] the choir", 
+    "In__year__there": "In [year] there", 
+    "In__year__they": "In [year] they", 
+    "In__year_,_at_the_dinner_table,_the_family": "In [year], at the dinner table, the family", 
+    "In__year_,_there": "In [year], there", 
+    "In__year_,_with_a_knife,_he": "In [year], with a knife, he", 
+    "In__year_,_with_a_pen_to_paper,_she": "In [year], with a pen to paper, she", 
+    "In__year_,_with_his_credit_card,_he": "In [year], with his credit card, he", 
+    "In_the_magic_show_in__year_,_there_magically": "In the magic show in [year], there magically",
+}
 
+ALL_VERBS_PREDICTIONS_TEMPLATE = "../olmo_predictions/model_predictions__{prompt}/{model_name}/{just_model_name}_all_verbs_wordboundary_predictions.json"
 MODEL_DISPLAY_NAMES = {
     "pythia": "Pythia-1.4B-deduped",
     "EleutherAI_pythia-1b-deduped": "Pythia-1B-deduped",
@@ -258,14 +270,14 @@ class AnalyzerClass:
                     year_record = data[year]
 
                     # Files provide 'absolute' next-token probabilities; normalize to sum to 1
-                    if "absolute" not in year_record:
+                    if "boundary_adjusted" not in year_record:
                         raise ValueError(f"Year record missing 'absolute' key for {predictions_path}, year {year}")
-                    verb_to_prob_cleaned = {k.strip(): v for k, v in year_record["absolute"].items()}
+                    verb_to_prob_cleaned = {k.strip(): v for k, v in year_record["boundary_adjusted"].items()}
                     total = sum(verb_to_prob_cleaned.values())
                     if total > 1.0 + 1e-6:
                         top_contribs = sorted(verb_to_prob_cleaned.items(), key=lambda x: x[1], reverse=True)[:10]
                         raise ValueError(
-                            f"Total probability in 'absolute' > 1 for {model_name} prompt '{prompt_name}' year {year}: "
+                            f"Total probability in 'boundary_adjusted' > 1 for {model_name} prompt '{prompt_name}' year {year}: "
                             f"total={total:.8f}. Top contributors: {top_contribs}"
                         )
                     total_prob_year = total
@@ -471,8 +483,10 @@ class AnalyzerClass:
             filtered_years.append(year_str)
         years = filtered_years
         
-        # Plot
-        fig, ax = plt.subplots(figsize=(5.2, 3))
+        # Make the plot taller if the title is multi-line (e.g., includes a prompt on next row)
+        extra_height = 0.8 if "\n" in data_type else 0.0
+        extra_width = 1.4 if "\n" in data_type else 0.0
+        fig, ax = plt.subplots(figsize=(5.2 + extra_width, 3 + extra_height))
         bottom = np.zeros(len(years))
         
         # Determine tense order and colors based on separate_present_future flag
@@ -496,7 +510,7 @@ class AnalyzerClass:
         model_display = get_model_display_name(model, data_type)
         
         title = f"{model_display} — {display_data_type}"
-        safe_data_type = data_type.replace(' ', '_')
+        safe_data_type = data_type.replace(' ', '_').replace('\n', '_')
         filename = f"{model}_checkpoint{checkpoint}_{safe_data_type}_{year_start}-{year_end}"
         
         ax.set_title(title)
@@ -520,6 +534,9 @@ class AnalyzerClass:
         # Save
         save_path = Path(output_dir) / f"{filename}.png"
         plt.tight_layout()
+        if "\n" in data_type:
+            # Give extra top margin so multi-line titles aren't clipped
+            plt.subplots_adjust(top=0.88)
         plt.savefig(save_path, dpi=600)
         plt.close()
         print(f"Saved: {save_path}")
@@ -1095,19 +1112,33 @@ if __name__ == "__main__":
     # plot_cross_entropies_per_year_over_checkpoints(analyzer, analyzer.pythia_predictions, "pythia", PYTHIA_CHECKPOINTS, start_year, years_end)
  
     # Example (commented): Load prompt-based all-verbs predictions using good-verbs mapping
-    prompts = [
-        # "During__year__there", "In__year__the_choir", "In__year__there", 
-        # "In__year__they", "In__year_,_at_the_dinner_table,_the_family", 
-        # "In__year_,_there", "In__year_,_with_a_knife,_he", "In__year_,_with_a_pen_to_paper,_she", 
-        "In__year_,_with_his_credit_card,_he", 
-        # "In_the_magic_show_in__year_,_there_magically",
-    ]
-    models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
-    prompt_preds = analyzer.load_other_prompts_using_good_verbs(prompts, models_for_prompts)
-    # Plot absolute (non-relative) bars for each model at the synthetic 'final' checkpoint
-    for model_name in models_for_prompts:
-        for prompt in prompts:
-            analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, NEXT_TOKEN_NAME, "final", start_year, years_end, make_relative=False, separate_present_future=False)
-        # Saved under folder f"{model_name}_checkpointfinal"
+    # prompts = [
+    #     "During__year__there", "In__year__the_choir", "In__year__there", 
+    #     "In__year__they", "In__year_,_at_the_dinner_table,_the_family", 
+    #     "In__year_,_there", "In__year_,_with_a_knife,_he", "In__year_,_with_a_pen_to_paper,_she", 
+    #     "In__year_,_with_his_credit_card,_he", 
+    #     "In_the_magic_show_in__year_,_there_magically",
+    # ]
+    # models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
+    # prompt_preds = analyzer.load_other_prompts_using_good_verbs(prompts, models_for_prompts)
+    # # Plot absolute (non-relative) bars for each model at the synthetic 'final' checkpoint
+    # for model_name in models_for_prompts:
+    #     for prompt in prompts:
+    #         display_prompt = PROMPT_DISPLAY_NAMES.get(prompt, prompt)
+    #         data_type_with_prompt = f"{NEXT_TOKEN_NAME}\n{display_prompt}"
+    #         analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", start_year, years_end, make_relative=False)
+    #     # Saved under folder f"{model_name}_checkpointfinal"
+
+    # make basic bar plots for a really big range
+    analyzer.bar_plot(analyzer.olmo_co_occurrence, "olmo", CO_OCCURR_NAME, cp, 1000, 3000)
+    analyzer.bar_plot(analyzer.olmo_exact_string_match, "olmo", EXACT_STRING_MATCH_NAME, cp, 1000, 3000)
+    analyzer.bar_plot(analyzer.pythia_co_occurrence, "pythia", CO_OCCURR_NAME, cp, 1000, 3000)
+    analyzer.bar_plot(analyzer.pythia_exact_string_match, "pythia", EXACT_STRING_MATCH_NAME, cp, 1000, 3000)
+    analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, cp, 1000, 3000)
+    analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, cp, 1000, 3000)
+
+    # plot_model_predictions
+    analyzer.bar_plot(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, cp, 1000, 3000)
+    analyzer.bar_plot(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, cp, 1000, 3000)
 
          
