@@ -42,7 +42,7 @@ PROMPT_DISPLAY_NAMES = {
     "In_the_magic_show_in__year_,_there_magically": "In the magic show in [year], there magically",
 }
 
-ALL_VERBS_PREDICTIONS_TEMPLATE = "../olmo_predictions/model_predictions__{prompt}/{model_name}/{just_model_name}_all_verbs_wordboundary_predictions.json"
+GENERAL_PREDICTIONS_TEMPLATE = "../olmo_predictions/model_predictions__{prompt}/{model_name}/{just_model_name}{all_verbs}{wordboundary}_predictions.json"
 MODEL_DISPLAY_NAMES = {
     "pythia": "Pythia-1.4B-deduped",
     "EleutherAI_pythia-1b-deduped": "Pythia-1B-deduped",
@@ -213,7 +213,7 @@ class AnalyzerClass:
         
         return model_name_to_predictions
 
-    def load_other_prompts_using_good_verbs(self, prompt_names, model_names):
+    def load_other_prompts(self, prompt_names, model_names, all_verbs=False, wordboundary=False, stored_on_disk=False):
         """Load per-prompt predictions aggregating per-year probabilities over all verbs.
         Uses the per-file metadata 'tense_dict' to map verbs to tenses, then
         collapses present+future into 'presfut'. Always operates on per-year
@@ -224,16 +224,30 @@ class AnalyzerClass:
                   where year_to_counts_absolute[year][tense] holds summed probabilities.
         """
         prompt_to_model_to_predictions = {}
+        if all_verbs:
+            print("using all_verbs")
+        else:
+            print("not using all_verbs")
 
         for prompt_name in prompt_names:
             prompt_to_model_to_predictions[prompt_name] = {}
             for model_name in model_names:
                 just_model_name = model_name.split("_")[-1]
-                predictions_path = ALL_VERBS_PREDICTIONS_TEMPLATE.format(
+
+                all_verbs_str = "_all_verbs" if all_verbs else ""
+                wordboundary_str = "_wordboundary" if wordboundary else ""
+
+                predictions_path = GENERAL_PREDICTIONS_TEMPLATE.format(
                     prompt=prompt_name,
                     model_name=model_name,
                     just_model_name=just_model_name,
+                    all_verbs=all_verbs_str,
+                    wordboundary=wordboundary_str,
                 )
+                
+                if stored_on_disk:
+                    predictions_path = '/scr-ssd/suzeva' + predictions_path[2:]
+
                 if not os.path.exists(predictions_path):
                     raise FileNotFoundError(f"could not find {predictions_path}")
                 with open(predictions_path, "r") as f:
@@ -242,20 +256,23 @@ class AnalyzerClass:
                 # Build verb->tense mapping from file metadata tense_dict
                 if "metadata" not in data or "tense_dict" not in data["metadata"]:
                     raise ValueError(f"Missing 'metadata.tense_dict' in {predictions_path}")
-                tense_dict = data["metadata"]["tense_dict"]
-                verb_to_tense = {}
-                for v in tense_dict.get("past", []):
-                    vt = v.strip()
-                    if vt:
-                        verb_to_tense[vt] = "past"
-                for v in tense_dict.get("present", []):
-                    vt = v.strip()
-                    if vt:
-                        verb_to_tense[vt] = "presfut"
-                for v in tense_dict.get("future", []):
-                    vt = v.strip()
-                    if vt:
-                        verb_to_tense[vt] = "presfut"
+                if all_verbs:
+                    tense_dict = data["metadata"]["tense_dict"]
+                    verb_to_tense = {}
+                    for v in tense_dict.get("past", []):
+                        vt = v.strip()
+                        if vt:
+                            verb_to_tense[vt] = "past"
+                    for v in tense_dict.get("present", []):
+                        vt = v.strip()
+                        if vt:
+                            verb_to_tense[vt] = "presfut"
+                    for v in tense_dict.get("future", []):
+                        vt = v.strip()
+                        if vt:
+                            verb_to_tense[vt] = "presfut"
+                else:
+                    verb_to_tense = TENSE_MAPPING
 
                 # Initialize all years to zeros
                 year_to_counts_absolute = {}
@@ -268,15 +285,20 @@ class AnalyzerClass:
                         continue
                     year_record = data[year]
 
-                    # Files provide 'absolute' next-token probabilities; normalize to sum to 1
-                    if "boundary_adjusted" not in year_record:
-                        raise ValueError(f"Year record missing 'absolute' key for {predictions_path}, year {year}")
-                    verb_to_prob_cleaned = {k.strip(): v for k, v in year_record["boundary_adjusted"].items()}
+                    if wordboundary:
+                        if "boundary_adjusted" not in year_record:
+                            raise ValueError(f"Year record missing 'boundary_adjusted' key for {predictions_path}, year {year}")
+                        verb_to_prob_cleaned = {k.strip(): v for k, v in year_record["boundary_adjusted"].items()}
+                    else:
+                        if "absolute" not in year_record:
+                            raise ValueError(f"Year record missing 'absolute' key for {predictions_path}, year {year}")
+                        verb_to_prob_cleaned = {k.strip(): v for k, v in year_record["absolute"].items()}
+
                     total = sum(verb_to_prob_cleaned.values())
                     if total > 1.0 + 1e-6:
                         top_contribs = sorted(verb_to_prob_cleaned.items(), key=lambda x: x[1], reverse=True)[:10]
                         raise ValueError(
-                            f"Total probability in 'boundary_adjusted' > 1 for {model_name} prompt '{prompt_name}' year {year}: "
+                            f"Total probability in 'boundary_adjusted/absolute' > 1 for {model_name} prompt '{prompt_name}' year {year}: "
                             f"total={total:.8f}. Top contributors: {top_contribs}"
                         )
                     total_prob_year = total
@@ -519,7 +541,7 @@ class AnalyzerClass:
         ax.set_title(title)
         # Use 10-year intervals for x-axis ticks; fallback if none present
         tick_indices = [i for i, y in enumerate(years) if int(y) % 10 == 0]
-        if len(years) > 1000:
+        if len(years) > 500:
             tick_indices = [i for i, y in enumerate(years) if int(y) % 100 == 0]
 
         if tick_indices:
