@@ -368,28 +368,30 @@ class AnalyzerClass:
             results_absolute[cp] = year_to_counts_absolute
         return results_absolute
 
+    def populate_gold_distribution(self, cutoff):
+        gold_per_year = {}
+        for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1]):
+            year_dist = {}
+            if year < cutoff:
+                year_dist = {"past": 1.0, "presfut": 0.0}
+            if year > cutoff:
+                year_dist = {"past": 0.0, "presfut": 1.0}
+            if year == cutoff:
+                continue
+            gold_per_year[str(year)] = year_dist
+        return gold_per_year
+
     def populate_gold_data(self):
-        def populate_gold_distribution(cutoff):
-            gold_per_year = {}
-            for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1]):
-                year_dist = {}
-                if year < cutoff:
-                    year_dist = {"past": 1.0, "presfut": 0.0}
-                if year > cutoff:
-                    year_dist = {"past": 0.0, "presfut": 1.0}
-                if year == cutoff:
-                    continue
-                gold_per_year[str(year)] = year_dist
-            return gold_per_year
+        
 
 
         for cp in OLMO_CHECKPOINTS:
-            self.olmo_relative_gold_distribution[cp] = populate_gold_distribution(OLMO_CUTOFF)
+            self.olmo_relative_gold_distribution[cp] = self.populate_gold_distribution(OLMO_CUTOFF)
         for cp in PYTHIA_CHECKPOINTS:
-            self.pythia_relative_gold_distribution[cp] = populate_gold_distribution(PYTHIA_CUTOFF)
+            self.pythia_relative_gold_distribution[cp] = self.populate_gold_distribution(PYTHIA_CUTOFF)
         
-        self.olmo_relative_gold_distribution["final"] = populate_gold_distribution(OLMO_CUTOFF)
-        self.pythia_relative_gold_distribution["final"] = populate_gold_distribution(PYTHIA_CUTOFF)
+        self.olmo_relative_gold_distribution["final"] = self.populate_gold_distribution(OLMO_CUTOFF)
+        self.pythia_relative_gold_distribution["final"] = self.populate_gold_distribution(PYTHIA_CUTOFF)
 
 
     def _compute_laplace_smoothed_ngram(self, absolute_counts_per_cp):
@@ -764,12 +766,7 @@ class AnalyzerClass:
         
         # Ensure we have the right number of data points
         if len(ce_losses_olmo) != len(years) or len(ce_losses_pythia) != len(years):
-            print(f"Warning: Number of CE losses ({len(ce_losses_olmo)}, {len(ce_losses_pythia)}) doesn't match year range ({len(years)})")
-            # Truncate to minimum length
-            min_len = min(len(ce_losses_olmo), len(ce_losses_pythia), len(years))
-            years = years[:min_len]
-            ce_losses_olmo = ce_losses_olmo[:min_len]
-            ce_losses_pythia = ce_losses_pythia[:min_len]
+            raise ValueError(f"Number of CE losses ({len(ce_losses_olmo)}, {len(ce_losses_pythia)}) doesn't match year range ({len(years)})")
         
         # Plot the data
         ax.plot(years, ce_losses_olmo, label='OLMo2-1B', color='blue', marker='o', markersize=3, linewidth=1)
@@ -802,7 +799,7 @@ class AnalyzerClass:
         plt.close()
         print(f"Saved year prompts cross-entropy plot: {save_path}")
 
-    def compute_cross_entropy_over_range(self, dist_dict, model, checkpoint, year_start, year_end, allow_missing_data=False, specific_years=None):
+    def compute_cross_entropy_over_range(self, dist_dict, model, checkpoint, year_start, year_end, allow_missing_data=False, specific_years=None, gold_dist_year=None):
         """Compute cross-entropy loss between model predictions and gold labels.
         
         Args:
@@ -824,10 +821,16 @@ class AnalyzerClass:
         normalized_dist_dict = self._make_relative_distributions(dist_dict)
         
         # Get gold distribution for this model
-        if model == "olmo":
+        if gold_dist_year is not None:
+            gold_cp = self.populate_gold_distribution(gold_dist_year)
+            # this is a bit of a hack
+            cutoff = gold_dist_year
+        elif model == "olmo":
             gold_cp = self.olmo_relative_gold_distribution[checkpoint]
+            cutoff = OLMO_CUTOFF
         elif model == "pythia":
             gold_cp = self.pythia_relative_gold_distribution[checkpoint]
+            cutoff = PYTHIA_CUTOFF
         else:
             raise ValueError(f"Invalid model: {model}")
         
@@ -846,8 +849,7 @@ class AnalyzerClass:
             year_str = str(year)
             
             # Skip cutoff year
-            if ((model == "olmo" and year == OLMO_CUTOFF) or 
-                (model == "pythia" and year == PYTHIA_CUTOFF)):
+            if year == cutoff:
                 continue
                 
             if year_str not in gold_cp:

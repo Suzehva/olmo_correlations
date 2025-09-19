@@ -149,17 +149,17 @@ def year_squared_prompts(analyzer):
     ce_over_system_prompt_years_olmo = []
     ce_over_system_prompt_years_pythia = []
     prompt_list = []
-    for year in range(1950, 2100 + 1):
+    for year in range(1950, 2050 + 1):
         prompt = f"The_current_date_is_{year}._In__year__there"
         prompt_list.append(prompt)
         prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=False, wordboundary=False, stored_on_disk=True)
         
-        ce_for_system_prompt_year_olmo = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt]["allenai_OLMo-2-0425-1B"], "olmo", "final", 1950, 2050)
+        ce_for_system_prompt_year_olmo = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt]["allenai_OLMo-2-0425-1B"], "olmo", "final", 1950, 2050, gold_dist_year=year)
         ce_for_system_prompt_year_pythia = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt]["EleutherAI_pythia-1.4b-deduped"], "pythia", "final", 1950, 2050)
         print(f"Calculated CE for {prompt} with OLMo: {ce_for_system_prompt_year_olmo['average_loss']} and Pythia: {ce_for_system_prompt_year_pythia['average_loss']}")
         ce_over_system_prompt_years_olmo.append(ce_for_system_prompt_year_olmo['average_loss'])
         ce_over_system_prompt_years_pythia.append(ce_for_system_prompt_year_pythia['average_loss'])
-    analyzer.plot_average_cross_entropies_across_year_prompts(ce_over_system_prompt_years_olmo, ce_over_system_prompt_years_pythia, 1950, 2100, "The current date is [system_prompt_year]. In [year] there")
+    analyzer.plot_average_cross_entropies_across_year_prompts(ce_over_system_prompt_years_olmo, ce_over_system_prompt_years_pythia, 1950, 2050, "The current date is [system_prompt_year]. In [year] there")
 
     
 
@@ -216,6 +216,18 @@ if __name__ == "__main__":
     # big_bar_plot_predictions_training_data(analyzer)
     year_squared_prompts(analyzer)
     # try_different_system_prompts(analyzer)
+
+    # models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
+    # for year in [1960, 1990, 2010, 2040]:
+    #     prompt = f"The_current_date_is_{year}._In__year__there"
+    #     prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=False, wordboundary=False, stored_on_disk=True)
+    #     data_type_with_prompt = f"{NEXT_TOKEN_NAME}\n{prompt}"
+    #     # plot them
+    #     for model_name in models_for_prompts:
+    #         analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1950, 2050, make_relative=False)
+        
+
+
 
 
     
