@@ -144,34 +144,25 @@ def big_bar_plot_predictions_training_data(analyzer):
     analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, cp, year_start, year_end)
 
 def year_squared_prompts(analyzer):
-    # models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
-    # for year in [1950, 2000, 2050]:
-    #     prompt = f"The_year_is_{year}._In__year__there"
-    #     prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=True, wordboundary=False, stored_on_disk=True)
-    #     data_type_with_prompt = f"{NEXT_TOKEN_NAME}\nThe year is {year}. In [year] there"
-    #     for model_name in models_for_prompts:
-    #         analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1600, 2400, make_relative=False)
-    #         analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1900, 2100, make_relative=False)
-
-    # CE between gold dist and year squared prompts
-    start_year = 1950
-    end_year = 2050
+   # CE between gold dist and year squared prompts
     models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
     ce_over_system_prompt_years_olmo = []
     ce_over_system_prompt_years_pythia = []
     prompt_list = []
-    for year in range(1950, 2051):
-        prompt = f"The_year_is_{year}._In__year__there"
+    for year in range(1950, 2100 + 1):
+        prompt = f"The_current_date_is_{year}._In__year__there"
         prompt_list.append(prompt)
         prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=False, wordboundary=False, stored_on_disk=True)
         
-        ce_for_system_prompt_year_olmo = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt], "olmo", "final", start_year, end_year)
-        ce_for_system_prompt_year_pythia = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt], "pythia", "final", start_year, end_year)
-        ce_over_system_prompt_years_olmo.append(ce_for_system_prompt_year_olmo)
-        ce_over_system_prompt_years_pythia.append(ce_for_system_prompt_year_pythia)
+        ce_for_system_prompt_year_olmo = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt]["allenai_OLMo-2-0425-1B"], "olmo", "final", 1950, 2050)
+        ce_for_system_prompt_year_pythia = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt]["EleutherAI_pythia-1.4b-deduped"], "pythia", "final", 1950, 2050)
+        print(f"Calculated CE for {prompt} with OLMo: {ce_for_system_prompt_year_olmo['average_loss']} and Pythia: {ce_for_system_prompt_year_pythia['average_loss']}")
+        ce_over_system_prompt_years_olmo.append(ce_for_system_prompt_year_olmo['average_loss'])
+        ce_over_system_prompt_years_pythia.append(ce_for_system_prompt_year_pythia['average_loss'])
+    analyzer.plot_average_cross_entropies_across_year_prompts(ce_over_system_prompt_years_olmo, ce_over_system_prompt_years_pythia, 1950, 2100, "The current date is [system_prompt_year]. In [year] there")
+
     
-    plot_cross_entropies([ce_over_system_prompt_years_olmo], [f"{NEXT_TOKEN_NAME}\n{prompt}" for prompt in prompt_list], "olmo", start_year, end_year)
-    plot_cross_entropies([ce_over_system_prompt_years_pythia], [f"{NEXT_TOKEN_NAME}\n{prompt}" for prompt in prompt_list], "pythia", start_year, end_year)
+
 
 def try_different_system_prompts(analyzer):
 
@@ -179,27 +170,30 @@ def try_different_system_prompts(analyzer):
     ce_over_system_prompt_years_pythia = []
     
     models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
-    prompt_list = ["In_the_year__year__there", "In__year__there", "It_is_2025._In__year__there", "The_year_is_2025._In__year__there", "The_current_date_is_2025._In__year__there", "Current_date:_2025._In__year__there"]
+    prompt_list = ["The_date_is_2025._In__year__there", "In_the_year__year__there", "In__year__there", "It_is_2025._In__year__there", "The_year_is_2025._In__year__there", "The_current_date_is_2025._In__year__there", "Current_date:_2025._In__year__there"]
 
     for prompt in prompt_list:
         prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=False, wordboundary=False, stored_on_disk=False)
         data_type_with_prompt = f"{NEXT_TOKEN_NAME}\n{prompt}"
         # plot them
-        for model_name in models_for_prompts:
-            analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1950, 2050, make_relative=False)
+        # for model_name in models_for_prompts:
+        #     analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1950, 2050, make_relative=False)
         
         # calculate loss
-        ce_for_system_prompt_year_olmo = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt], "olmo", "final", 1950, 2050)
-        ce_for_system_prompt_year_pythia = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt], "pythia", "final", 1950, 2050)
+        ce_for_system_prompt_year_olmo = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt]["allenai_OLMo-2-0425-1B"], "olmo", "final", 1950, 2050)
+        ce_for_system_prompt_year_pythia = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt]["EleutherAI_pythia-1.4b-deduped"], "pythia", "final", 1950, 2050)
         ce_over_system_prompt_years_olmo.append(ce_for_system_prompt_year_olmo)
         ce_over_system_prompt_years_pythia.append(ce_for_system_prompt_year_pythia)
     
-    # print analysis of losses
+    # print analysis of losses sorted by lowest loss
     print(f"OLMo losses:")
-    for i, prompt in enumerate(prompt_list):
+    sorted_olmo = sorted(enumerate(prompt_list), key=lambda x: ce_over_system_prompt_years_olmo[x[0]]['average_loss'])
+    for i, prompt in sorted_olmo:
         print(f"{prompt}: {ce_over_system_prompt_years_olmo[i]['average_loss']}")
-    print(f"Pythia losses:")
-    for i, prompt in enumerate(prompt_list):
+    
+    print(f"\nPythia losses:")
+    sorted_pythia = sorted(enumerate(prompt_list), key=lambda x: ce_over_system_prompt_years_pythia[x[0]]['average_loss'])
+    for i, prompt in sorted_pythia:
         print(f"{prompt}: {ce_over_system_prompt_years_pythia[i]['average_loss']}")
     print(f"")
   
@@ -220,8 +214,9 @@ if __name__ == "__main__":
     # bar_plot_multiple_checkpoints(analyzer)
     # ce_over_checkpoints(analyzer)
     # big_bar_plot_predictions_training_data(analyzer)
-    # year_squared_prompts(analyzer)
-    try_different_system_prompts(analyzer)
+    year_squared_prompts(analyzer)
+    # try_different_system_prompts(analyzer)
+
 
     
 
