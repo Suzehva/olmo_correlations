@@ -143,6 +143,28 @@ def big_bar_plot_predictions_training_data():
     analyzer.bar_plot(analyzer.olmo_relative_ngram, "olmo", NGRAM_NAME, cp, year_start, year_end)
     analyzer.bar_plot(analyzer.pythia_relative_ngram, "pythia", NGRAM_NAME, cp, year_start, year_end)
 
+def year_squared_prompts():
+    models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
+    for year in [1950, 2000, 2050]:
+        prompt = f"The_year_is_{year}._In__year__there"
+        prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=True, wordboundary=False, stored_on_disk=True)
+        data_type_with_prompt = f"{NEXT_TOKEN_NAME}\nThe year is {year}. In [year] there"
+        for model_name in models_for_prompts:
+            analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1600, 2400, make_relative=False)
+            analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1900, 2100, make_relative=False)
+
+    # comparison with non-years squared prompts
+    models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
+    for prompt in ["In__year__there", "In_the_year__year__there"]:
+        prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=False, wordboundary=False, stored_on_disk=False)
+        data_type_with_prompt = f"{NEXT_TOKEN_NAME}\n{prompt}"
+        for model_name in models_for_prompts:
+            analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1600, 2400, make_relative=False)
+            analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1900, 2100, make_relative=False)
+        
+            
+
+
 if __name__ == "__main__":
     # python get_paper_results.py
 
@@ -157,37 +179,20 @@ if __name__ == "__main__":
     # bar_plot_multiple_checkpoints()
     # ce_over_checkpoints()
     # big_bar_plot_predictions_training_data()
-
-    cp = 10000
-    start_year = 1950
-    end_year = 2050
-
-
-    # year squared prompts
-    # models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
-    # for year in [1950, 2000, 2050]:
-    #     prompt = f"The_year_is_{year}._In__year__there"
-    #     prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=True, wordboundary=False, stored_on_disk=True)
-    #     data_type_with_prompt = f"{NEXT_TOKEN_NAME}\nThe year is {year}. In [year] there"
-    #     for model_name in models_for_prompts:
-    #         # analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1600, 2400, make_relative=False)
-    #         analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1900, 2100, make_relative=False)
-
-
-    analyzer.bar_plot(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, "final", 1600, 2400)
-    analyzer.bar_plot(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, "final", 1600, 2400)
-    analyzer.bar_plot(analyzer.olmo_predictions, "olmo", NEXT_TOKEN_NAME, "final", 1900, 2100)
-    analyzer.bar_plot(analyzer.pythia_predictions, "pythia", NEXT_TOKEN_NAME, "final", 1900, 2100)
+    # year_squared_prompts()
 
     models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
-    prompt = "In_the_year___year__there"
-    prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=False, wordboundary=False, stored_on_disk=False)
-    data_type_with_prompt = f"{NEXT_TOKEN_NAME}\nIn the year [year] there"
-    for model_name in models_for_prompts:
-        analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1600, 2400, make_relative=False)
-        analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1900, 2100, make_relative=False)
+    for year in [1950, 2000, 2050]:
+        prompt = f"It_is_{year}._In__year__there"
+        prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=True, wordboundary=False, stored_on_disk=True)
+        data_type_with_prompt = f"{NEXT_TOKEN_NAME}\nIt is {year}. In [year] there"
+        for model_name in models_for_prompts:
+            analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1600, 2400, make_relative=False)
+            analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1900, 2100, make_relative=False)
+
+
+
     
-        
 
 
     

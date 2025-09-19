@@ -189,7 +189,7 @@ class AnalyzerClass:
             year_to_counts_absolute = {}
             
             # Initialize all years with zero counts for past, present, future
-            for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1]):
+            for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1] + 1):
                 year_to_counts_absolute[str(year)] = {
                     "past": 0,
                     "present": 0,
@@ -276,7 +276,7 @@ class AnalyzerClass:
 
                 # Initialize all years to zeros
                 year_to_counts_absolute = {}
-                for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1]):
+                for year in range(TOTAL_YEARS[0], TOTAL_YEARS[1] + 1):
                     year_to_counts_absolute[str(year)] = {"past": 0.0, "presfut": 0.0}
 
                 # Aggregate summed probabilities per year according to tense mapping
@@ -323,6 +323,8 @@ class AnalyzerClass:
                             f"Top unmapped verbs: {unmapped_top}"
                         )
                     
+                    if not year in year_to_counts_absolute:
+                        raise ValueError(f"DEBUG: Year {year} not found in year_to_counts_absolute. Available keys: {year_to_counts_absolute.keys()}")
                     year_to_counts_absolute[year]["past"] = past_sum
                     year_to_counts_absolute[year]["presfut"] = presfut_sum
 
@@ -477,7 +479,7 @@ class AnalyzerClass:
             separate_present_future: If True, plot past/present/future separately instead of past/presfut
         """
         if checkpoint not in dist_dict:
-            raise ValueError(f"Checkpoint {checkpoint} not found in {dist_dict}")
+            raise ValueError(f"Checkpoint {checkpoint} not found")
         
         # Convert to relative distributions if requested
         if make_relative:
