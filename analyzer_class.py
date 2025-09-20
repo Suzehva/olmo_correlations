@@ -770,174 +770,187 @@ class AnalyzerClass:
         
         return years_with_no_data
 
-    def plot_average_cross_entropies_across_year_prompts(self, ce_losses_olmo, ce_losses_pythia, start_year, end_year, prompt, output_dir="year_prompts_cross_entropy"):
-        """Plot average cross-entropy losses across multiple year prompts.
+def plot_average_cross_entropies_across_year_prompts(self, ce_losses_dict, start_year, end_year, prompt, output_dir="year_prompts_cross_entropy"):
+    """Plot average cross-entropy losses across multiple year prompts for multiple models.
+    
+    Args:
+        ce_losses_dict: Dictionary with model names as keys and lists of CE losses as values
+                       Example: {'OLMo2-1B': [1.2, 1.1, ...], 'Pythia-1.4B-deduped': [1.3, 1.2, ...]}
+        start_year: Start year (inclusive)
+        end_year: End year (inclusive)
+        prompt: The prompt being used
+        output_dir: Directory to save the plots
+    """
+    Path(output_dir).mkdir(parents=True, exist_ok=True)
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Create year range for x-axis
+    years = list(range(start_year, end_year + 1))
+    
+    # Color palette for different models
+    colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h']
+    
+    # Validate that all models have the correct number of data points
+    for model_name, ce_losses in ce_losses_dict.items():
+        if len(ce_losses) != len(years):
+            raise ValueError(f"Number of CE losses for {model_name} ({len(ce_losses)}) doesn't match year range ({len(years)})")
+    
+    # Plot data for each model
+    all_losses = []
+    for idx, (model_name, ce_losses) in enumerate(ce_losses_dict.items()):
+        color = colors[idx % len(colors)]
+        marker = markers[idx % len(markers)]
         
-        Args:
-            ce_losses_olmo: List of CE losses for OLMo model
-            ce_losses_pythia: List of CE losses for Pythia model
-            start_year: Start year (inclusive)
-            end_year: End year (inclusive)
-            output_dir: Directory to save the plots
-        """
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
-        
-        fig, ax = plt.subplots(figsize=(10, 6))
-        
-        # Create year range for x-axis
-        years = list(range(start_year, end_year + 1))
-        
-        # Ensure we have the right number of data points
-        if len(ce_losses_olmo) != len(years) or len(ce_losses_pythia) != len(years):
-            raise ValueError(f"Number of CE losses ({len(ce_losses_olmo)}, {len(ce_losses_pythia)}) doesn't match year range ({len(years)})")
-        
-        # Plot the data
-        ax.plot(years, ce_losses_olmo, label='OLMo2-1B', color='blue', marker='o', markersize=3, linewidth=1)
-        ax.plot(years, ce_losses_pythia, label='Pythia-1.4B-deduped', color='red', marker='s', markersize=3, linewidth=1)
-        
-        # Format the plot
-        ax.set_xlabel('System Prompt Year', fontsize=12)
-        ax.set_ylabel('Cross-Entropy Loss', fontsize=12)
-        ax.set_title(f'Cross-Entropy Loss over different system prompt years \n {prompt}', fontsize=14)
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        
-        # Set axis limits
-        ax.set_xlim(start_year - 5, end_year + 5)
-        
-        # Y-axis: set based on actual data with some padding
-        all_losses = ce_losses_olmo + ce_losses_pythia
-        if all_losses:
-            y_min, y_max = min(all_losses), max(all_losses)
-            y_range = y_max - y_min
-            y_padding = max(0.05 * y_range, 0.01)  # At least 5% padding or 0.01 units
-            ax.set_ylim(max(0, y_min - y_padding), y_max + y_padding)
-        
-        # Save the plot
-        filename = f"year_prompts_cross_entropy_{start_year}_{end_year}.png"
-        save_path = Path(output_dir) / filename
-        
-        plt.tight_layout()
-        plt.savefig(save_path, dpi=600, bbox_inches='tight')
-        plt.close()
-        print(f"Saved year prompts cross-entropy plot: {save_path}")
+        ax.plot(years, ce_losses, label=model_name, color=color, marker=marker, 
+                markersize=3, linewidth=1)
+        all_losses.extend(ce_losses)
+    
+    # Format the plot
+    ax.set_xlabel('System Prompt Year', fontsize=12)
+    ax.set_ylabel('Cross-Entropy Loss', fontsize=12)
+    ax.set_title(f'Cross-Entropy Loss over different system prompt years \n {prompt}', fontsize=14)
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    
+    # Set axis limits
+    ax.set_xlim(start_year - 5, end_year + 5)
+    
+    # Y-axis: set based on actual data with some padding
+    if all_losses:
+        y_min, y_max = min(all_losses), max(all_losses)
+        y_range = y_max - y_min
+        y_padding = max(0.05 * y_range, 0.01)  # At least 5% padding or 0.01 units
+        ax.set_ylim(max(0, y_min - y_padding), y_max + y_padding)
+    
+    # Save the plot
+    filename = f"year_prompts_cross_entropy_{start_year}_{end_year}.png"
+    save_path = Path(output_dir) / filename
+    
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=600, bbox_inches='tight')
+    plt.close()
+    print(f"Saved year prompts cross-entropy plot: {save_path}")
 
-    def compute_cross_entropy_over_range(self, dist_dict, model, checkpoint, year_start, year_end, allow_missing_data=False, specific_years=None, gold_dist_year=None):
-        """Compute cross-entropy loss between model predictions and gold labels.
+
+
+def compute_cross_entropy_over_range(self, dist_dict, model, checkpoint, year_start, year_end, allow_missing_data=False, specific_years=None, gold_dist_year=None):
+    """Compute cross-entropy loss between model predictions and gold labels.
+    
+    Args:
+        dist_dict: Dictionary containing distribution data (will be normalized to probabilities that sum to 1)
+        model: Model name ("olmo" or "pythia")
+        checkpoint: Checkpoint number
+        year_start: Start year (inclusive)
+        year_end: End year (inclusive)
+        allow_missing_data: If True, skip years with no data instead of raising errors
+        specific_years: Optional list of specific years to compute CE for (overrides year_start/year_end range)
         
-        Args:
-            dist_dict: Dictionary containing distribution data (will be normalized to probabilities that sum to 1)
-            model: Model name ("olmo" or "pythia")
-            checkpoint: Checkpoint number
-            year_start: Start year (inclusive)
-            year_end: End year (inclusive)
-            allow_missing_data: If True, skip years with no data instead of raising errors
-            specific_years: Optional list of specific years to compute CE for (overrides year_start/year_end range)
+    Returns:
+        Dictionary with cross-entropy results including years_used
+    """
+    if checkpoint not in dist_dict:
+        raise ValueError(f"Checkpoint {checkpoint} not found. Available keys: {dist_dict.keys()}")
+    
+    # Normalize the input distribution to ensure probabilities sum to 1
+    normalized_dist_dict = self._make_relative_distributions(dist_dict)
+    
+    # Get gold distribution for this model
+    if gold_dist_year is not None:
+        gold_cp = self.populate_gold_distribution(gold_dist_year)
+        # this is a bit of a hack
+        cutoff = gold_dist_year
+    elif model == "olmo":
+        gold_cp = self.olmo_relative_gold_distribution[checkpoint]
+        cutoff = OLMO_CUTOFF
+    elif model == "pythia":
+        gold_cp = self.pythia_relative_gold_distribution[checkpoint]
+        cutoff = PYTHIA_CUTOFF
+    else:
+        raise ValueError(f"Invalid model: {model}")
+    
+    dist_cp = normalized_dist_dict[checkpoint]
+    
+    losses = {}
+    years_used = []
+    
+    # Use specific years if provided, otherwise use the range
+    if specific_years is not None:
+        years_to_process = specific_years
+    else:
+        years_to_process = range(year_start, year_end + 1)
+    
+    for year in years_to_process:
+        year_str = str(year)
+        
+        # Skip cutoff year
+        if year == cutoff:
+            continue
             
-        Returns:
-            Dictionary with cross-entropy results including years_used
-        """
-        if checkpoint not in dist_dict:
-            raise ValueError(f"Checkpoint {checkpoint} not found. Available keys: {dist_dict.keys()}")
-        
-        # Normalize the input distribution to ensure probabilities sum to 1
-        normalized_dist_dict = self._make_relative_distributions(dist_dict)
-        
-        # Get gold distribution for this model
-        if gold_dist_year is not None:
-            gold_cp = self.populate_gold_distribution(gold_dist_year)
-            # this is a bit of a hack
-            cutoff = gold_dist_year
-        elif model == "olmo":
-            gold_cp = self.olmo_relative_gold_distribution[checkpoint]
-            cutoff = OLMO_CUTOFF
-        elif model == "pythia":
-            gold_cp = self.pythia_relative_gold_distribution[checkpoint]
-            cutoff = PYTHIA_CUTOFF
-        else:
-            raise ValueError(f"Invalid model: {model}")
-        
-        dist_cp = normalized_dist_dict[checkpoint]
-        
-        losses = {}
-        years_used = []
-        
-        # Use specific years if provided, otherwise use the range
-        if specific_years is not None:
-            years_to_process = specific_years
-        else:
-            years_to_process = range(year_start, year_end + 1)
-        
-        for year in years_to_process:
-            year_str = str(year)
+        if year_str not in gold_cp:
+            continue
             
-            # Skip cutoff year
-            if year == cutoff:
-                continue
-                
-            if year_str not in gold_cp:
-                continue
-                
-            if year_str not in dist_cp:
-                continue
-            pred_data = dist_cp[year_str]
-            gold_data = gold_cp[year_str]
-            
-            # Skip years with no prediction data
-            if sum(pred_data.values()) == 0:
-                if allow_missing_data:
-                    continue
-                raise ValueError(f"No prediction data for year {year_str}")
-            
-            # Convert to past vs future binary classification (new structure only)
-            pred_past = pred_data["past"]
-            pred_future = pred_data["presfut"]
-            
-            gold_past = gold_data["past"]
-            gold_future = gold_data["presfut"]
-            
-            # Skip cases where predictions and gold are completely unrelated
-            # (pred=1 for one class, gold=1 for the other class)
+        if year_str not in dist_cp:
+            continue
+        pred_data = dist_cp[year_str]
+        gold_data = gold_cp[year_str]
+        
+        # Skip years with no prediction data
+        if sum(pred_data.values()) == 0:
             if allow_missing_data:
-                if ((pred_past == 1.0 and gold_past == 0.0) or 
-                    (pred_future == 1.0 and gold_future == 0.0)):
-                    continue
-            
-            # Compute cross-entropy: -sum(target * log(pred))
-            epsilon = 1e-12  # Avoid log(0)
-            ce_loss = -(gold_past * np.log(pred_past + epsilon) + 
-                       gold_future * np.log(pred_future + epsilon))
-            
-            # Handle floating-point precision errors
-            if ce_loss < 0 and abs(ce_loss) < 1e-10:
-                ce_loss = 0.0
-            
-            if not np.isfinite(ce_loss):
-                if allow_missing_data:
-                    continue
-                raise ValueError(f"Invalid cross-entropy loss for year {year_str}: {ce_loss}")
-            
-            losses[year_str] = ce_loss
-            years_used.append(year_str)
+                continue
+            raise ValueError(f"No prediction data for year {year_str}")
         
-        # Compute average loss
-        if len(losses) == 0:
-            raise ValueError(f"No valid data points for {model} checkpoint {checkpoint}")
-        else:
-            avg_loss = sum(losses.values()) / len(losses)
+        # Convert to past vs future binary classification (new structure only)
+        pred_past = pred_data["past"]
+        pred_future = pred_data["presfut"]
         
-        # Sanity check: print sample data for year 1950 if it exists
-        # if "1950" in losses and "1950" in dist_cp and "1950" in gold_cp:
-        #     print(f"Sanity check for {model} checkpoint {checkpoint}, year 1950:")
-        #     print(f"  Normalized predictions: {dist_cp['1950']}")
-        #     print(f"  Gold distribution: {gold_cp['1950']}")
-        #     print(f"  Cross-entropy loss: {losses['1950']}")
+        gold_past = gold_data["past"]
+        gold_future = gold_data["presfut"]
         
-        return {
-            'per_year_losses': losses,
-            'average_loss': avg_loss,
-            'years_used': years_used,
-        }
+        # Skip cases where predictions and gold are completely unrelated
+        # (pred=1 for one class, gold=1 for the other class)
+        if allow_missing_data:
+            if ((pred_past == 1.0 and gold_past == 0.0) or 
+                (pred_future == 1.0 and gold_future == 0.0)):
+                continue
+        
+        # Compute cross-entropy: -sum(target * log(pred))
+        epsilon = 1e-12  # Avoid log(0)
+        ce_loss = -(gold_past * np.log(pred_past + epsilon) + 
+                    gold_future * np.log(pred_future + epsilon))
+        
+        # Handle floating-point precision errors
+        if ce_loss < 0 and abs(ce_loss) < 1e-10:
+            ce_loss = 0.0
+        
+        if not np.isfinite(ce_loss):
+            if allow_missing_data:
+                continue
+            raise ValueError(f"Invalid cross-entropy loss for year {year_str}: {ce_loss}")
+        
+        losses[year_str] = ce_loss
+        years_used.append(year_str)
+    
+    # Compute average loss
+    if len(losses) == 0:
+        raise ValueError(f"No valid data points for {model} checkpoint {checkpoint}")
+    else:
+        avg_loss = sum(losses.values()) / len(losses)
+    
+    # Sanity check: print sample data for year 1950 if it exists
+    # if "1950" in losses and "1950" in dist_cp and "1950" in gold_cp:
+    #     print(f"Sanity check for {model} checkpoint {checkpoint}, year 1950:")
+    #     print(f"  Normalized predictions: {dist_cp['1950']}")
+    #     print(f"  Gold distribution: {gold_cp['1950']}")
+    #     print(f"  Cross-entropy loss: {losses['1950']}")
+    
+    return {
+        'per_year_losses': losses,
+        'average_loss': avg_loss,
+        'years_used': years_used,
+    }
 
 def plot_cross_entropies_per_year_over_checkpoints(analyzer, dist_dict, model_name, checkpoints, year_start=1950, year_end=2050, output_dir="cross_entropy_per_year"):
     """Plot cross-entropy losses over checkpoints with a separate line for each year.
@@ -1005,55 +1018,101 @@ def plot_cross_entropies_per_year_over_checkpoints(analyzer, dist_dict, model_na
     print(f"Saved cross-entropy per year over checkpoints plot: {save_path}")
 
 
-def plot_average_cross_entropies_over_checkpoints(analyzer, distributions_dict, model_name, checkpoints, year_start=1950, year_end=2050, output_dir="cross_entropy_over_checkpoints"):
-    """Plot average cross-entropy losses over checkpoints for multiple distributions.
+def plot_average_cross_entropies_across_year_prompts(ce_losses_dict, start_year, end_year, output_dir="year_prompts_cross_entropy"):
+    """Plot average cross-entropy losses across multiple year prompts for multiple models and prompts.
     
     Args:
-        analyzer: AnalyzerClass instance
-        distributions_dict: Dictionary mapping distribution names to distribution data dictionaries
-        model_name: Model name ("olmo" or "pythia")
-        checkpoints: List of checkpoint numbers to plot
-        year_start: Start year (inclusive)
-        year_end: End year (inclusive)
-        output_dir: Directory to save the plot
+        ce_losses_dict: Dictionary with "model_name|prompt" as keys and lists of CE losses as values
+                       Example: {'OLMo2-1B|prompt1': [1.2, 1.1, ...], 'Pythia-1.4B|prompt1': [1.3, 1.2, ...],
+                                'OLMo2-1B|prompt2': [1.1, 1.0, ...], 'Pythia-1.4B|prompt2': [1.2, 1.1, ...]}
+        start_year: Start year (inclusive)
+        end_year: End year (inclusive)
+        output_dir: Directory to save the plots
     """
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     
-    fig, ax = plt.subplots(figsize=(9, 6))
+    fig, ax = plt.subplots(figsize=(10, 6))
     
-    for dist_name, dist_dict in distributions_dict.items():
-        # Only use checkpoints that exist in this distribution
+    # Create year range for x-axis
+    years = list(range(start_year, end_year + 1))
+    
+    # Color palette for different models
+    colors = ['blue', 'red', 'green', 'orange', 'purple', 'brown', 'pink', 'gray', 'olive', 'cyan']
+    markers = ['o', 's', '^', 'D', 'v', '<', '>', 'p', '*', 'h']
+    
+    # Validate that all model-prompt combinations have the correct number of data points
+    for key, ce_losses in ce_losses_dict.items():
+        if len(ce_losses) != len(years):
+            raise ValueError(f"Number of CE losses for {key} ({len(ce_losses)}) doesn't match year range ({len(years)})")
+    
+    # Extract unique prompts for organization
+    prompts = set()
+    for key in ce_losses_dict.keys():
+        if '|' in key:
+            prompt = key.split('|', 1)[1]
+            prompts.add(prompt)
+        else:
+            prompts.add("default")
+    
+    # Create line styles for different prompts
+    line_styles = ['-', '--', '-.', ':']
+    
+    # Plot data for each model-prompt combination
+    all_losses = []
+    model_idx = 0
+    
+    for key, ce_losses in ce_losses_dict.items():
+        if '|' in key:
+            model_name, prompt = key.split('|', 1)
+        else:
+            model_name, prompt = key, "default"
         
-        avg_losses = []
+        color = colors[model_idx % len(colors)]
+        marker = markers[model_idx % len(markers)]
         
-        for cp in checkpoints:
-            ce_result = analyzer.compute_cross_entropy_over_range(
-                dist_dict, model_name, cp, year_start, year_end, allow_missing_data=True
-            )
-            avg_losses.append(ce_result['average_loss'])
+        # Use different line styles for different prompts
+        prompt_list = sorted(list(prompts))
+        prompt_idx = prompt_list.index(prompt)
+        line_style = line_styles[prompt_idx % len(line_styles)]
         
-        # Use consistent colors from the cross-entropy color mapping
-        color = CROSS_ENTROPY_COLOR_MAPPING.get(dist_name, "black")
-        ax.plot(checkpoints, avg_losses, 
-                label=dist_name, color=color, marker='o', linewidth=2, markersize=6)
+        # Create label that shows both model and prompt
+        if prompt == "default":
+            label = model_name
+        else:
+            label = f"{model_name} ({prompt})"
+        
+        ax.plot(years, ce_losses, label=label, color=color, marker=marker, 
+                linestyle=line_style, markersize=3, linewidth=1)
+        all_losses.extend(ce_losses)
+        model_idx += 1
     
     # Format the plot
-    ax.set_xlabel('Checkpoint', fontsize=12)
-    ax.set_ylabel('Average Cross-Entropy Loss', fontsize=12)
-    model_display = MODEL_DISPLAY_NAMES.get(model_name, str(model_name))
-    ax.set_title(f"{model_display} — Cross-Entropy Loss over Training", fontsize=14)
-    ax.legend(loc='upper right')
+    ax.set_xlabel('System Prompt Year', fontsize=12)
+    ax.set_ylabel('Cross-Entropy Loss', fontsize=12)
+    ax.set_title(f'Cross-Entropy Loss over different system prompt years', fontsize=14)
+    ax.legend()
     ax.grid(True, alpha=0.3)
     
+    # Set axis limits
+    ax.set_xlim(start_year - 5, end_year + 5)
+    
+    # Y-axis: set based on actual data with some padding
+    if all_losses:
+        y_min, y_max = min(all_losses), max(all_losses)
+        y_range = y_max - y_min
+        y_padding = max(0.05 * y_range, 0.01)  # At least 5% padding or 0.01 units
+        ax.set_ylim(max(0, y_min - y_padding), y_max + y_padding)
+    
     # Save the plot
-    num_dists = len(distributions_dict)
-    filename = f"{model_name}_avg_cross_entropy_over_checkpoints_{num_dists}dists_{year_start}_{year_end}.png"
+    filename = f"year_prompts_cross_entropy_{start_year}_{end_year}.png"
     save_path = Path(output_dir) / filename
     
     plt.tight_layout()
     plt.savefig(save_path, dpi=600, bbox_inches='tight')
     plt.close()
-    print(f"Saved cross-entropy over checkpoints plot: {save_path}")
+    print(f"Saved year prompts cross-entropy plot: {save_path}")
+
+
 
 
 def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=1950, year_end=2050, output_dir="cross_entropy_plots"):
