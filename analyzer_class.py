@@ -4,6 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from pathlib import Path
 from datetime import datetime
+from PIL import Image
 
 PYTHIA_PREDICTIONS_FILE = "../olmo_predictions/model_predictions__In__year__there/EleutherAI_pythia-1.4b-deduped_rev_step{cp}/pythia-1.4b-deduped_rev_step{cp}_predictions.json"
 OLMO_PREDICTIONS_FILE = "../olmo_predictions/output_checkpoints_olmo/checkpoint_{cp}.json" # this is the 2nd try model
@@ -49,9 +50,11 @@ MODEL_DISPLAY_NAMES = {
     "EleutherAI_pythia-1.4b-deduped": "Pythia-1.4B-deduped",
     "olmo": "OLMo2-1B",
     "allenai_OLMo-2-0425-1B": "OLMo2-1B",
+    "allenai_OLMo-2-0425-1B-Instruct": "OLMo2-1B-Instruct",
     "EleutherAI_pythia-6.9b-deduped": "Pythia-6.9B-deduped",
     "allenai_OLMo-2-1124-7B": "OLMo2-7B",
     "meta-llama_Llama-3.1-8B": "LLama3.1-8B",
+    "meta-llama_Llama-3.1-8B-Instruct": "LLama3.1-8B-Instruct",
 }
 
 def get_model_display_name(model_key, data_type):
@@ -324,7 +327,11 @@ class AnalyzerClass:
                     year_to_counts_absolute[year]["past"] = past_sum
                     year_to_counts_absolute[year]["presfut"] = presfut_sum
 
-                prompt_to_model_to_predictions[prompt_name][model_name] = {"final": year_to_counts_absolute}
+                if "instruct" in model_name.lower():
+                    prompt_to_model_to_predictions[prompt_name][model_name] = {"final_instruct": year_to_counts_absolute}
+                else:
+                    prompt_to_model_to_predictions[prompt_name][model_name] = {"final": year_to_counts_absolute}
+
 
         return prompt_to_model_to_predictions
 
@@ -442,11 +449,13 @@ class AnalyzerClass:
         print(f"All data saved to: {filepath}")
         return filepath
 
-    # ----------------------------- PLOTTING -----------------------------
     
-    def _get_folder_name(self, model, checkpoint, data_type):
+    def _get_folder_name(self, model, checkpoint, data_type, folder_name_proposal):
         """Generate folder name for saving plots."""
-        return f"{model}_checkpoint{checkpoint}"
+        folder_name =  f"{model}_checkpoint{checkpoint}"
+        if folder_name_proposal:
+            folder_name = folder_name_proposal
+        return folder_name
     
     def _make_relative_distributions(self, dist_dict, separate_present_future=False):
         """Convert absolute counts to relative distributions (probabilities that sum to 1)."""
@@ -465,7 +474,10 @@ class AnalyzerClass:
                         relative_dict[cp][year] = {tense: 0.0 for tense in TENSE_ORDER}
         return relative_dict
 
-    def bar_plot(self, dist_dict, model, data_type, checkpoint, year_start, year_end, make_relative=True, separate_present_future=False):
+    # ----------------------------- PLOTTING -----------------------------
+    
+
+    def bar_plot(self, dist_dict, model, data_type, checkpoint, year_start, year_end, make_relative=True, separate_present_future=False, system_year=None, folder_name_proposal=None):
         """Plot stacked bars for a distribution at a specific checkpoint.
         Adapted for the new tense structure using 'past' and 'presfut'.
         
@@ -478,6 +490,7 @@ class AnalyzerClass:
             year_end: End year (inclusive)
             make_relative: If True, convert counts to probabilities that sum to 1
             separate_present_future: If True, plot past/present/future separately instead of past/presfut
+            system_year: Optional year to draw a vertical line at (e.g., 2022 for train/test split)
         """
         if checkpoint not in dist_dict:
             raise ValueError(f"Checkpoint {checkpoint} not found")
@@ -486,7 +499,7 @@ class AnalyzerClass:
         if make_relative:
             dist_dict = self._make_relative_distributions(dist_dict, separate_present_future)
         
-        output_dir = self._get_folder_name(model, checkpoint, data_type)
+        output_dir = self._get_folder_name(model, checkpoint, data_type, folder_name_proposal)
         Path(output_dir).mkdir(parents=True, exist_ok=True)
         
         cp_data = dist_dict[checkpoint]
@@ -533,6 +546,14 @@ class AnalyzerClass:
                   label=label, color=tense_colors[tense], width=1.0)
             bottom += vals
         
+        
+        # Add vertical line for system_year if specified
+        if system_year is not None:
+            # Find the index of system_year in the filtered years
+            system_year_str = str(system_year)
+            system_year_index = years.index(system_year_str)
+            ax.axvline(x=system_year_index, color="red", linestyle="--", linewidth=1, alpha=0.7)
+            
         # Format - using same logic as kl_divergence_checkpoints.py but simplified
         display_data_type = data_type
         model_display = get_model_display_name(model, data_type)
@@ -571,6 +592,8 @@ class AnalyzerClass:
         plt.savefig(save_path, dpi=600)
         plt.close()
         print(f"Saved: {save_path}")
+
+        return save_path
 
     def bar_plots_for_checkpoints(self, dist_dict, model, data_type, checkpoints, rows, cols, year_start, year_end, subplot_width=3.5, subplot_height=2.2):
         """
@@ -1103,3 +1126,66 @@ def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=19
         plt.savefig(save_path, dpi=600, bbox_inches='tight')
         plt.close()
         print(f"Saved cross-entropy plot: {save_path}")
+    
+
+
+def combine_images_from_layout(layout, source_dir, output_path, cell_width=None, cell_height=None):
+    """
+    Combine images based on a 2D layout array.
+    
+    Args:
+        layout: 2D list/array where each element is a filename or None for empty cells
+        source_dir: Directory containing the image files
+        output_path: Where to save the combined image
+        cell_width: Fixed width for each cell (optional, will use max width if None)
+        cell_height: Fixed height for each cell (optional, will use max height if None)
+    """
+    # Load all unique images mentioned in the layout
+    image_cache = {}
+    all_filenames = set()
+    
+    for row in layout:
+        for filename in row:
+            if filename is not None:
+                all_filenames.add(filename)
+    
+    # Load images into cache
+    for filename in all_filenames:
+        image_path = os.path.join(source_dir, filename)
+        if os.path.exists(image_path):
+            image_cache[filename] = Image.open(image_path)
+    
+    # Calculate cell dimensions if not provided
+    if cell_width is None or cell_height is None:
+        widths = [img.width for img in image_cache.values()]
+        heights = [img.height for img in image_cache.values()]
+        cell_width = cell_width or max(widths)
+        cell_height = cell_height or max(heights)
+    
+    # Calculate final image dimensions
+    rows = len(layout)
+    cols = len(layout[0]) if layout else 0
+    final_width = cols * cell_width
+    final_height = rows * cell_height
+    
+    # Create the combined image
+    combined = Image.new('RGBA', (final_width, final_height), (255, 255, 255, 0))
+    
+    # Place images according to layout
+    for row_idx, row in enumerate(layout):
+        for col_idx, filename in enumerate(row):
+            if filename is not None and filename in image_cache:
+                img = image_cache[filename]
+                
+                # Calculate position
+                x = col_idx * cell_width
+                y = row_idx * cell_height
+                
+                # Resize image to fit cell if needed
+                if img.size != (cell_width, cell_height):
+                    img = img.resize((cell_width, cell_height), Image.Resampling.LANCZOS)
+                
+                combined.paste(img, (x, y))
+    
+    combined.save(output_path)
+    return combined

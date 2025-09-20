@@ -214,17 +214,49 @@ if __name__ == "__main__":
     # bar_plot_multiple_checkpoints(analyzer)
     # ce_over_checkpoints(analyzer)
     # big_bar_plot_predictions_training_data(analyzer)
-    year_squared_prompts(analyzer)
+    # year_squared_prompts(analyzer)
     # try_different_system_prompts(analyzer)
 
-    # models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
-    # for year in [1960, 1990, 2010, 2040]:
-    #     prompt = f"The_current_date_is_{year}._In__year__there"
-    #     prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=False, wordboundary=False, stored_on_disk=True)
-    #     data_type_with_prompt = f"{NEXT_TOKEN_NAME}\n{prompt}"
-    #     # plot them
-    #     for model_name in models_for_prompts:
-    #         analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1950, 2050, make_relative=False)
+
+    # OLMO INSTRUCT TUNED
+    years = [1997, 2051]
+    save_paths = []
+    for base_model, instruct_model in [("meta-llama/Llama-3.1-8B", "meta-llama/Llama-3.1-8B-Instruct"), ("allenai/OLMo-2-1124-7B", "allenai/OLMo-2-1124-7B-Instruct"), ("allenai/OLMo-2-0425-1B", "allenai/OLMo-2-0425-1B-Instruct")]:
+        for year in years:
+            prompts_for_instruct = [f"system_The_current_date_is_{year}.In__year__there", f"system_Current_date:_{year}In__year__there", f"system_Today_Date:_{year}In__year__there", f"system_The_year_is_{year}.In__year__there", f"system_It_is_{year}.In__year__there"]
+            prompts_for_base = [f"The_current_date_is_{year}._In__year__there", f"Current_date:_{year}_In__year__there", f"Today_Date:_{year}_In__year__there", f"The_year_is_{year}._In__year__there", f"It_is_{year}._In__year__there"]
+                
+            base_model = base_model.replace("/", "_")
+            instruct_model = instruct_model.replace("/", "_")
+            model_name = base_model.split("/")[-1].lower()
+
+            # INSTRUCT
+            for prompt in prompts_for_instruct:
+                prompt_preds = analyzer.load_other_prompts([prompt], [instruct_model], all_verbs=False, wordboundary=False, stored_on_disk=True)
+                data_type_with_prompt = f"{NEXT_TOKEN_NAME}\n{prompt}"
+                save_path = analyzer.bar_plot(prompt_preds[prompt][instruct_model], model_name, data_type_with_prompt, "final_instruct", 1950, 2100, make_relative=False, system_year=year, folder_name_proposal="instruct_vs_base")
+                save_paths.append(save_path)
+    
+            # BASE
+            for prompt in prompts_for_base:
+                prompt_preds = analyzer.load_other_prompts([prompt], [base_model], all_verbs=False, wordboundary=False, stored_on_disk=True)
+                data_type_with_prompt = f"{NEXT_TOKEN_NAME}\n{prompt}"
+                save_path = analyzer.bar_plot(prompt_preds[prompt][base_model], model_name, data_type_with_prompt, "final", 1950, 2100, make_relative=False, system_year=year, folder_name_proposal="instruct_vs_base")
+                save_paths.append(save_path)
+
+        print(save_paths)
+    # now combine into one plot
+    layout = [
+        []
+    ]
+    combine_images_from_layout(layout)
+
+
+
+
+
+
+
         
 
 
