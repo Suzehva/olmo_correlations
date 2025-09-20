@@ -1,6 +1,6 @@
 from analyzer_class import (
     AnalyzerClass, 
-    plot_cross_entropies_per_year_over_checkpoints, plot_average_cross_entropies_over_checkpoints, plot_cross_entropies,
+    plot_cross_entropies_per_year_over_checkpoints, plot_average_cross_entropies_over_checkpoints, plot_cross_entropies, combine_images_original_sizes,
     CO_OCCURR_NAME, EXACT_STRING_MATCH_NAME, NGRAM_NAME, NEXT_TOKEN_NAME,
     OLMO_CHECKPOINTS, PYTHIA_CHECKPOINTS,
     PROMPT_DISPLAY_NAMES,
@@ -165,61 +165,8 @@ def year_squared_prompts(analyzer):
 
 
 def try_different_system_prompts(analyzer):
-
-    ce_over_system_prompt_years_olmo = []
-    ce_over_system_prompt_years_pythia = []
-    
-    models_for_prompts = ["allenai_OLMo-2-0425-1B", "EleutherAI_pythia-1.4b-deduped"]
-    prompt_list = ["The_date_is_2025._In__year__there", "In_the_year__year__there", "In__year__there", "It_is_2025._In__year__there", "The_year_is_2025._In__year__there", "The_current_date_is_2025._In__year__there", "Current_date:_2025._In__year__there"]
-
-    for prompt in prompt_list:
-        prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=False, wordboundary=False, stored_on_disk=False)
-        data_type_with_prompt = f"{NEXT_TOKEN_NAME}\n{prompt}"
-        # plot them
-        # for model_name in models_for_prompts:
-        #     analyzer.bar_plot(prompt_preds[prompt][model_name], model_name, data_type_with_prompt, "final", 1950, 2050, make_relative=False)
-        
-        # calculate loss
-        ce_for_system_prompt_year_olmo = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt]["allenai_OLMo-2-0425-1B"], "olmo", "final", 1950, 2050)
-        ce_for_system_prompt_year_pythia = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt]["EleutherAI_pythia-1.4b-deduped"], "pythia", "final", 1950, 2050)
-        ce_over_system_prompt_years_olmo.append(ce_for_system_prompt_year_olmo)
-        ce_over_system_prompt_years_pythia.append(ce_for_system_prompt_year_pythia)
-    
-    # print analysis of losses sorted by lowest loss
-    print(f"OLMo losses:")
-    sorted_olmo = sorted(enumerate(prompt_list), key=lambda x: ce_over_system_prompt_years_olmo[x[0]]['average_loss'])
-    for i, prompt in sorted_olmo:
-        print(f"{prompt}: {ce_over_system_prompt_years_olmo[i]['average_loss']}")
-    
-    print(f"\nPythia losses:")
-    sorted_pythia = sorted(enumerate(prompt_list), key=lambda x: ce_over_system_prompt_years_pythia[x[0]]['average_loss'])
-    for i, prompt in sorted_pythia:
-        print(f"{prompt}: {ce_over_system_prompt_years_pythia[i]['average_loss']}")
-    print(f"")
-  
-            
-
-
-if __name__ == "__main__":
-    # python get_paper_results.py
-
-    analyzer = AnalyzerClass()
-
-    # filepath = analyzer.save_all_data_to_file()
-    # print(f"Data export completed. File saved: {filepath}")
-
-    # bar_plot_predictions_training_data(analyzer)
-    # plot_other_model_predictions(analyzer)
-    # ce_over_years(analyzer)
-    # bar_plot_multiple_checkpoints(analyzer)
-    # ce_over_checkpoints(analyzer)
-    # big_bar_plot_predictions_training_data(analyzer)
-    # year_squared_prompts(analyzer)
-    # try_different_system_prompts(analyzer)
-
-
     # OLMO INSTRUCT TUNED
-    years = [1997, 2051]
+    years = [2004, 2054]
     save_paths = []
     for base_model, instruct_model in [("meta-llama/Llama-3.1-8B", "meta-llama/Llama-3.1-8B-Instruct"), ("allenai/OLMo-2-1124-7B", "allenai/OLMo-2-1124-7B-Instruct"), ("allenai/OLMo-2-0425-1B", "allenai/OLMo-2-0425-1B-Instruct")]:
         for year in years:
@@ -244,12 +191,56 @@ if __name__ == "__main__":
                 save_path = analyzer.bar_plot(prompt_preds[prompt][base_model], model_name, data_type_with_prompt, "final", 1950, 2100, make_relative=False, system_year=year, folder_name_proposal="instruct_vs_base")
                 save_paths.append(save_path)
 
-        print(save_paths)
     # now combine into one plot
-    layout = [
-        []
-    ]
-    combine_images_from_layout(layout)
+    for model_name in ["meta-llama_llama-3.1-8b", "allenai_olmo-2-1124-7b", "allenai_olmo-2-0425-1b"]:
+        layout = [
+            [f"{model_name}_checkpointfinal_instruct_Next-token_predictions_system_The_current_date_is_{years[0]}.In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_Next-token_predictions_The_current_date_is_{years[0]}._In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_instruct_Next-token_predictions_system_The_current_date_is_{years[1]}.In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_Next-token_predictions_The_current_date_is_{years[1]}._In__year__there_1950-2100.png"],
+            [f"{model_name}_checkpointfinal_instruct_Next-token_predictions_system_Current_date:_{years[0]}In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_Next-token_predictions_Current_date:_{years[0]}_In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_instruct_Next-token_predictions_system_Current_date:_{years[1]}In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_Next-token_predictions_Current_date:_{years[1]}_In__year__there_1950-2100.png"],
+            [f"{model_name}_checkpointfinal_instruct_Next-token_predictions_system_Today_Date:_{years[0]}In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_Next-token_predictions_Today_Date:_{years[0]}_In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_instruct_Next-token_predictions_system_Today_Date:_{years[1]}In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_Next-token_predictions_Today_Date:_{years[1]}_In__year__there_1950-2100.png"],
+            [f"{model_name}_checkpointfinal_instruct_Next-token_predictions_system_The_year_is_{years[0]}.In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_Next-token_predictions_The_year_is_{years[0]}._In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_instruct_Next-token_predictions_system_The_year_is_{years[1]}.In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_Next-token_predictions_The_year_is_{years[1]}._In__year__there_1950-2100.png"],
+            [f"{model_name}_checkpointfinal_instruct_Next-token_predictions_system_It_is_{years[0]}.In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_Next-token_predictions_It_is_{years[0]}._In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_instruct_Next-token_predictions_system_It_is_{years[1]}.In__year__there_1950-2100.png", f"{model_name}_checkpointfinal_Next-token_predictions_It_is_{years[1]}._In__year__there_1950-2100.png"],
+        ]
+        combine_images_original_sizes(layout, "instruct_vs_base", f"instruct_vs_base/{model_name}.png")
+
+  
+            
+
+
+if __name__ == "__main__":
+    # python get_paper_results.py
+
+    analyzer = AnalyzerClass()
+
+    # filepath = analyzer.save_all_data_to_file()
+    # print(f"Data export completed. File saved: {filepath}")
+
+    # bar_plot_predictions_training_data(analyzer)
+    # plot_other_model_predictions(analyzer)
+    # ce_over_years(analyzer)
+    # bar_plot_multiple_checkpoints(analyzer)
+    # ce_over_checkpoints(analyzer)
+    # big_bar_plot_predictions_training_data(analyzer)
+    # year_squared_prompts(analyzer)
+    # try_different_system_prompts(analyzer)
+
+    # [("meta-llama/Llama-3.1-8B", "meta-llama/Llama-3.1-8B-Instruct"), ("allenai/OLMo-2-1124-7B", "allenai/OLMo-2-1124-7B-Instruct"), ("allenai/OLMo-2-0425-1B", "allenai/OLMo-2-0425-1B-Instruct")]:
+    models_for_prompts = ["meta-llama/Llama-3.1-8B", "meta-llama/Llama-3.1-8B-Instruct", "allenai/OLMo-2-1124-7B", "allenai/OLMo-2-1124-7B-Instruct", "allenai/OLMo-2-0425-1B", "allenai/OLMo-2-0425-1B-Instruct"]
+    ce_over_system_prompt_years_olmo = []
+    ce_over_system_prompt_years_pythia = []
+    prompt_list = []
+    for year in range(1950, 2050 + 1):
+        prompt = f"The_current_date_is_{year}._In__year__there"
+        prompt_list.append(prompt)
+        prompt_preds = analyzer.load_other_prompts([prompt], models_for_prompts, all_verbs=False, wordboundary=False, stored_on_disk=True)
+        
+        ce_for_system_prompt_year_olmo = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt]["allenai_OLMo-2-0425-1B"], "olmo", "final", 1950, 2050, gold_dist_year=year)
+        ce_for_system_prompt_year_pythia = analyzer.compute_cross_entropy_over_range(prompt_preds[prompt]["EleutherAI_pythia-1.4b-deduped"], "pythia", "final", 1950, 2050)
+        print(f"Calculated CE for {prompt} with OLMo: {ce_for_system_prompt_year_olmo['average_loss']} and Pythia: {ce_for_system_prompt_year_pythia['average_loss']}")
+        ce_over_system_prompt_years_olmo.append(ce_for_system_prompt_year_olmo['average_loss'])
+        ce_over_system_prompt_years_pythia.append(ce_for_system_prompt_year_pythia['average_loss'])
+    analyzer.plot_average_cross_entropies_across_year_prompts(ce_over_system_prompt_years_olmo, ce_over_system_prompt_years_pythia, 1950, 2050, "The current date is [system_prompt_year]. In [year] there")
+
+
 
 
 

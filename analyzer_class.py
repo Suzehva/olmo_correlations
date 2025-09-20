@@ -1129,63 +1129,53 @@ def plot_cross_entropies(ce_results_list, labels_list, model_name, year_start=19
     
 
 
-def combine_images_from_layout(layout, source_dir, output_path, cell_width=None, cell_height=None):
+def combine_images_original_sizes(layout, source_dir, output_path):
     """
-    Combine images based on a 2D layout array.
-    
-    Args:
-        layout: 2D list/array where each element is a filename or None for empty cells
-        source_dir: Directory containing the image files
-        output_path: Where to save the combined image
-        cell_width: Fixed width for each cell (optional, will use max width if None)
-        cell_height: Fixed height for each cell (optional, will use max height if None)
+    Combine images preserving their original sizes.
     """
-    # Load all unique images mentioned in the layout
+    # Load images and calculate row/column dimensions
     image_cache = {}
-    all_filenames = set()
-    
     for row in layout:
         for filename in row:
             if filename is not None:
-                all_filenames.add(filename)
+                image_path = os.path.join(source_dir, filename)
+                if os.path.exists(image_path):
+                    image_cache[filename] = Image.open(image_path)
     
-    # Load images into cache
-    for filename in all_filenames:
-        image_path = os.path.join(source_dir, filename)
-        if os.path.exists(image_path):
-            image_cache[filename] = Image.open(image_path)
+    # Calculate dimensions for each row and column
+    row_heights = []
+    for row in layout:
+        max_height = 0
+        for filename in row:
+            if filename is not None and filename in image_cache:
+                max_height = max(max_height, image_cache[filename].height)
+        row_heights.append(max_height)
     
-    # Calculate cell dimensions if not provided
-    if cell_width is None or cell_height is None:
-        widths = [img.width for img in image_cache.values()]
-        heights = [img.height for img in image_cache.values()]
-        cell_width = cell_width or max(widths)
-        cell_height = cell_height or max(heights)
+    col_widths = []
+    for col_idx in range(len(layout[0])):
+        max_width = 0
+        for row_idx in range(len(layout)):
+            filename = layout[row_idx][col_idx]
+            if filename is not None and filename in image_cache:
+                max_width = max(max_width, image_cache[filename].width)
+        col_widths.append(max_width)
     
-    # Calculate final image dimensions
-    rows = len(layout)
-    cols = len(layout[0]) if layout else 0
-    final_width = cols * cell_width
-    final_height = rows * cell_height
+    # Create combined image
+    total_width = sum(col_widths)
+    total_height = sum(row_heights)
+    combined = Image.new('RGBA', (total_width, total_height), (255, 255, 255, 0))
     
-    # Create the combined image
-    combined = Image.new('RGBA', (final_width, final_height), (255, 255, 255, 0))
-    
-    # Place images according to layout
+    # Place images
+    y_offset = 0
     for row_idx, row in enumerate(layout):
+        x_offset = 0
         for col_idx, filename in enumerate(row):
             if filename is not None and filename in image_cache:
                 img = image_cache[filename]
-                
-                # Calculate position
-                x = col_idx * cell_width
-                y = row_idx * cell_height
-                
-                # Resize image to fit cell if needed
-                if img.size != (cell_width, cell_height):
-                    img = img.resize((cell_width, cell_height), Image.Resampling.LANCZOS)
-                
-                combined.paste(img, (x, y))
+                combined.paste(img, (x_offset, y_offset))
+            x_offset += col_widths[col_idx]
+        y_offset += row_heights[row_idx]
     
     combined.save(output_path)
+    print(f"Saved combined image: {output_path}")
     return combined
