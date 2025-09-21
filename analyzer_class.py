@@ -53,8 +53,9 @@ MODEL_DISPLAY_NAMES = {
     "allenai_OLMo-2-0425-1B-Instruct": "OLMo2-1B-Instruct",
     "EleutherAI_pythia-6.9b-deduped": "Pythia-6.9B-deduped",
     "allenai_OLMo-2-1124-7B": "OLMo2-7B",
-    "meta-llama_Llama-3.1-8B": "LLama3.1-8B",
-    "meta-llama_Llama-3.1-8B-Instruct": "LLama3.1-8B-Instruct",
+    "allenai_OLMo-2-1124-7B-Instruct": "OLMo2-7B-Instruct",
+    "meta-llama_Llama-3.1-8B": "Llama3.1-8B",
+    "meta-llama_Llama-3.1-8B-Instruct": "Llama3.1-8B-Instruct",
 }
 
 def get_model_display_name(model_key, data_type):
